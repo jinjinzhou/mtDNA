@@ -1,0 +1,2662 @@
+---
+title: "Summarize updated MT-DNA results (SNP- and Gene-based)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+      toc: true
+      toc_depth: 4
+---
+
+
+```{r, message=F, warning=F}
+# devtools::install_github("PheWAS/PheWAS")
+# devtools::install_github("camillemmoore/Power_Genetics", subdir="genpwr")
+
+library(PheWAS)
+library(tidyverse)
+library(plotly)
+library(forestplot)
+library(geomtextpath)
+library(colorspace)
+library(scales)
+library(grid)
+#library(khroma)
+library(formatdown)
+library(data.table)
+#library(ComplexUpset)
+library(knitr)
+library(magrittr)
+library(readxl)
+library(ggrepel)
+library(stringi)
+library(officer)
+library(flextable)
+library(openxlsx)
+library(httr)
+library(jsonlite)
+library(logistf)
+library(genpwr)
+library(cowplot)
+library(magick)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(rsvg)
+```
+
+```{r}
+# define folder directories
+dir <- "C:/Users/aubre/Box/MT-MVP/"
+analysis_dir <- paste0(dir, "/analysis/updated/2025Rerun/")
+egress_dir <- paste0(analysis_dir, "egress/")
+data_dir2 <- paste0(egress_dir, "20251014/")
+data_dir3 <- paste0(egress_dir, "20251201/")
+input_dir <- paste0(analysis_dir, "mt_input_clean/")
+output_dir <- paste0(analysis_dir, "mt_output_clean/")
+image_dir <- paste0(output_dir, "images/")
+dir.create(image_dir, recursive = T, showWarnings = FALSE)
+```
+
+## Load Info
+
+```{r}
+d_gene_all <- fread(paste0(input_dir, "results_mvp_genebased_all_2025.csv"),
+                  colClasses = c("phecode" = "character"))
+d_snp_all <- fread(paste0(input_dir, "results_mvp_snpbased_all_2025.csv"),
+                  colClasses = c("phecode" = "character"))
+intx_sex <- fread(paste0(data_dir2, "intx_result_sex_2025.csv"),
+                  colClasses = c("phecode" = "character"))
+intx_t2d <- fread(paste0(data_dir2, "intx_result_t2d_2025.csv"),
+                  colClasses = c("phecode" = "character"))
+all_afreqs <- fread(paste0(input_dir, "mvp_afreqs_all_2025.csv"))
+UKB_repl <- fread(paste0(input_dir, "results_ukb_replication.csv"),
+                  colClasses = c("phecode" = "character"))
+snps_in_SetIDs <- fread(paste0(input_dir, "snps_in_SetIDs.csv"))
+flowchart_data <- fread(paste0(data_dir2, "flowchart_data.txt"))
+extendedPheWAS <- fread(paste0(data_dir3, "MTextendedPheWAS_2025.txt"))
+```
+
+
+Load MT base info for solar plots
+```{r}
+#Gene boundaries
+refflat <- fread(paste0(analysis_dir,
+                  "../summary/gene_definitions/gencode_mt_refFlat.txt")) %>% 
+  select(1, 5, 6) %>%
+  set_names(c("gene", "start", "end")) %>% 
+  mutate(gene = gsub("MT-", "", gene)) %>%
+  # refflat is 0-based, whereas chip and mitomap are 1-based
+  # also, 'end' is exclusive
+  # add +1 to 'start' before joining to snp data
+  # keep 'end' the same (+ 1 -1) to make inclusive
+  mutate(start = start + 1)
+```
+
+## Define data encoding keys and color schema for plots
+Define data encoding keys
+```{r}
+biomarker_key <- c(
+  "a1c" = "HbA1c",
+  "tg_adj_INT" = "Triglycerides",
+  "ldlc_adj_INT" = "LDL",
+  "hdlc_adj_INT" = "HDL",
+  "sbp_adj" = "Systolic BP",
+  "dbp_adj" = "Diastolic BP",
+  "bmi_obese" = "Obesity (BMI >= 30)",
+  "bmi" = "Body Mass Index",
+  "phecodes" = "PheCodes",
+  "tg.adj.INT" = "Triglycerides",
+  "ldlc.adj.INT" = "LDL",
+  "hdlc.adj.INT" = "HDL",
+  "sbp.adj" = "Systolic BP",
+  "dbp.adj" = "Diastolic BP",
+  "bmi.obese" = "Obesity (BMI >= 30)"
+)
+```
+
+
+# Table 1
+
+```{r}
+table1a <- fread(paste0(data_dir2, "table1a.txt"), dec = ".") 
+table1b <- fread(paste0(data_dir2, "table1b.txt"), dec = ".") 
+table1c <- fread(paste0(data_dir2, "table1c.txt"), dec = ".") 
+
+names(table1b) <- gsub("EUR|AFR|AMR|EAS|_", "", names(table1b))
+names(table1c) <- gsub("EUR|AFR|AMR|EAS|_", "", names(table1c))
+names(table1c) <- gsub("NonDM", "Non-DM", names(table1c))
+names(table1b) <- str_to_title(names(table1b))
+names(table1a) <- gsub("  ", " ", names(table1a))
+names(table1b) <- gsub("  ", " ", names(table1b))
+names(table1c) <- gsub("  ", " ", names(table1c))
+```
+
+Formatting table 1
+```{r}
+var_key <- c(
+  "age" = "Age‡",
+  "female" = "Female §",
+  "sbp" = "SBP ‡",
+  "dbp" = "DBP ‡",
+  "bmi" = "BMI ‡",
+  "hdlc" = "HDL ‡",
+  "ldlc" = "LDL ‡",
+  "tg" = "Triglycerides ‡",
+  "a1c" = "HbA1c ‡",
+  "statin" = "Statin Use",
+  "phe_t2d" = "T2D* §"
+)
+```
+
+
+```{r}
+table1a <- table1a %>%
+  mutate(var = factor(var_key[var], levels = var_key)) %>%
+  arrange(var)
+table1b <- table1b %>%
+  mutate(var = factor(var_key[Var], levels = var_key)) %>%
+  select(-Var) %>%
+  arrange(var) %>%
+  select(var, everything())
+table1c <- table1c %>%
+  mutate(var = factor(var_key[var], levels = var_key)) %>%
+  arrange(var)
+```
+
+
+Use flextable to output formatted tables to .docx
+```{r}
+#reset
+init_flextable_defaults()
+
+# Set global defaults
+set_flextable_defaults(
+  font.size = 8,
+  font.family = "Calibri",
+  border.color = "black",
+  border.style = "solid",
+  padding.top = 0,
+  padding.bottom = 0
+)
+
+flextable1a <- flextable(table1a, cwidth = 1) %>% 
+  width(j = 2:5, width = 2) %>%
+  align(j = 2:5, align = "center", part = "all") %>%
+  bold(part = "header")
+
+flextable1b <- flextable(table1b, cwidth = 1) %>%
+  bold(part = "header") 
+
+flextable1c <- flextable(table1c, cwidth = 1) %>%
+  bold(part = "header") 
+
+tablesdoc <- read_docx() %>%
+  body_add_flextable(flextable1a) %>%
+  body_add_flextable(flextable1b) %>%
+  body_add_flextable(flextable1c) %>%
+  body_end_section_landscape()
+```
+
+
+
+## Summarize mtSNVs association analysis results (Phewas and biomarkers)
+
+### Invariant SNPs
+```{r}
+invar_snvs <- d_snp_all %>%
+  filter(ERRCODE == "CONST_OMITTED_ALLELE" &
+           Subgroup == "All" & grepl("phe_", trait)) %>%
+  distinct(Ancestry, ID, POS)
+invar_snvs %>% count(Ancestry) %>%
+  mutate(percent = round(100 * n / 248, 1))
+```
+
+
+### Filtering results 
+- Check that there are no errors (convergence issues, etc.)
+- Keep analysis results for traits with > 500 cases and controls
+  * This includes bmi_obese and all phecodes
+- SNP-level analysis is for MAF > 0.001
+- Note that FDR p-value needs to be calculated after filtering 
+  * Multiple testing correction applied separately for each ancestry/sex/population analysis
+- Calculate FDR adjusted p-value
+   * overall 4 ancestries, 
+   * 4 ancestries + SEX subgroups, 
+   * 4 ancestries + T2D
+   * 4 ancestries + Nondiabetic
+
+First, add phecode descriptions
+```{r}
+d_snp_all <- d_snp_all %>%
+  left_join(pheinfo %>% select(phecode, description, group))
+```
+
+Filter and check for errors
+```{r, message=F}
+# Filter out rare snps/traits
+d_snp_clean <- d_snp_all %>% 
+  # keep analysis results for phecodes with > 500 cases and controls
+  # also filter for obesity n cases
+  filter(n_cases >= 500 | is.na(n_cases)) %>%
+  filter(n_ctrls >= 500 | is.na(n_ctrls)) %>%
+  select(-n_ctrls) %>%
+  # SNP-level analysis is for MAF > 0.001 
+  filter(A1_FREQ >= 0.001) %>%
+  ungroup()
+
+# how many with > 500 cases have errors? None
+d_snp_clean %>% count(ERRCODE)
+```
+
+Calculate the adjusted p-value
+```{r}
+# Filter out those with errors (none)
+d_snp_clean <- d_snp_clean %>%
+  filter(ERRCODE == ".") %>%
+  dplyr::select(-ERRCODE) %>%
+  distinct() %>% 
+  group_by(Ancestry, Subgroup) %>%
+  mutate(p_adjust_fdr = p.adjust(P, "BH")) %>%
+  ungroup()
+```
+
+### Unique analysis
+How many unique snp x trait pairs in the filtered results?
+```{r}
+d_snp_clean %>% 
+  distinct(POS, trait) %>% 
+  nrow()
+```
+And by ancestry/subgroup?
+```{r}
+d_snp_clean %>% 
+  distinct(POS, trait, Ancestry) %>% nrow()
+
+d_snp_clean %>% 
+  distinct(POS, trait, Ancestry, Subgroup) %>% nrow()
+```
+By group?
+```{r}
+d_snp_clean %>%
+  filter(grepl("phe", trait)) %>%
+  distinct(phecode) %>%
+  left_join(pheinfo) %>% count(group) %>%
+  mutate(tot = sum(n))
+```
+
+
+### Format all SNP-level results
+
+Format unfiltered dataset - we will still display small MAFs, case Ns in some figures/tables 
+```{r, message=FALSE}
+d_snp_all_fmt <- d_snp_all %>%
+  # add FDR adjusted pval calculated only from the clean results
+  left_join(d_snp_clean) %>%
+  mutate(
+    Ancestry = factor(Ancestry, levels = c("EUR", "AFR", "AMR", "EAS")),
+    prop_cases = n_cases / observations,
+    `BP/REF/ALT` = str_c(POS, "/", OMITTED, "/", A1, sep = ""),
+    MAF = A1_FREQ,
+    Annotation = ifelse(
+      aa_change == "NA",
+      variant_type,
+      str_c(variant_type, ", ", aa_change, sep = "")
+    ),
+    `# Cases / N (%)` =
+      ifelse(
+        n_cases < 500,
+        " < 500",
+        paste(
+          formatC(n_cases, format = "d", big.mark = ","),
+          "/",
+          formatC(observations, format = "d", big.mark = ","),
+          paste0("(", round(prop_cases * 100, 1), "%)"),
+          sep = " "
+        )
+      ),
+    LCI = signif(L95, 3),
+    UCI = signif(U95, 3),
+    P = scientific(P, digits = 3),
+    fdr_sig = p_adjust_fdr < 0.05,
+    p_adjust_fdr = signif(p_adjust_fdr, digits = 3),
+    `OR (95% CI), P-value` =
+      ifelse(
+        MAF < 0.001 | (n_cases < 500 & !is.na(n_cases)),
+        "-",
+        paste0(round(OR, 2), " (", LCI, "-" , UCI, "), ", P)
+      ),
+    `FDR Adjusted P-value` = ifelse(is.na(p_adjust_fdr), "-", p_adjust_fdr),
+    `Alt AF` = ifelse(MAF < 0.001,
+                      "< 0.1%",
+                      paste0(signif(MAF * 100, 2), "%")),
+    `Description, Phecode` = paste0(description, ", ", phecode)
+  ) %>%
+  select(
+    dbSNP,
+    `BP/REF/ALT`,
+    Locus,
+    Annotation,
+    `Description, Phecode`,
+    Ancestry,
+    Subgroup,
+    `# Cases / N (%)`,
+    `Alt AF`,
+    `OR (95% CI), P-value`,
+    `FDR Adjusted P-value`,
+    fdr_sig,
+    phecode,
+    POS
+  ) %>%
+  ungroup() 
+```
+
+### Format cleaned/filtered SNP-level results
+```{r}
+d_snp_fmt <- d_snp_all_fmt %>%
+  filter(`FDR Adjusted P-value` != "-") %>%
+  mutate(`FDR Adjusted P-value` = as.numeric(`FDR Adjusted P-value`))
+nrow(d_snp_fmt)
+```
+
+# Table 2: Significant associations overall ancestry groups  
+- Significant SNP-level results by controlling FDR < 0.05
+```{r}
+d_sig_fdr <- d_snp_fmt %>%
+  filter(fdr_sig)  %>%
+  select(-fdr_sig)
+  
+d_sig_fdr %>% 
+  count(Ancestry, Subgroup, sort = T)
+```
+
+```{r}
+d_sig_fdr %>% 
+  arrange(Ancestry, POS) %>% 
+  filter(Subgroup == "All") %>%
+  select(`BP/REF/ALT`, Locus, Annotation, Ancestry, Subgroup, 
+         `Description, Phecode`,  `OR (95% CI), P-value`, 
+         `FDR Adjusted P-value`) %>%
+  kable()
+```
+
+
+```{r}
+d_sig_fdr_eur <- d_sig_fdr %>% 
+  filter(Subgroup == "All" & Ancestry == "EUR") 
+
+d_sig_fdr_afr <- d_sig_fdr %>% 
+  filter(Subgroup == "All" & Ancestry == "AFR")
+```
+
+```{r}
+snp_table2_eur <- d_snp_all_fmt %>%
+  filter(Subgroup == "All") %>%
+  select(-Subgroup) %>%
+  right_join(d_sig_fdr_eur %>%
+               filter(Subgroup == "All") %>%
+               ungroup() %>%
+               select(POS, phecode)) %>%
+  arrange(POS, phecode, Ancestry)  %>%
+  group_by(POS, phecode) %>%
+  mutate(
+    dbSNP = ifelse(row_number() == 1, dbSNP, ""),
+    Locus = ifelse(row_number() == 1, Locus, ""),
+    Annotation = ifelse(row_number() == 1, Annotation, ""),
+    `Description, Phecode` = ifelse(row_number() == 1, `Description, Phecode`, "")
+  ) %>%
+  ungroup() %>%
+  select(-c(phecode, POS, fdr_sig))
+
+snp_table2_eur
+nrow(snp_table2_eur)
+```
+
+
+```{r}
+snp_table2_afr <- d_snp_all_fmt %>%
+  filter(Subgroup == "All") %>%
+  select(-Subgroup) %>%
+  right_join(d_sig_fdr_afr %>%
+               filter(Subgroup == "All") %>%
+               ungroup() %>%
+               select(POS, phecode)) %>%
+  arrange(POS, phecode, Ancestry)  %>%
+  group_by(POS, phecode) %>%
+  mutate(
+    dbSNP = ifelse(row_number() == 1, dbSNP, ""),
+    Locus = ifelse(row_number() == 1, Locus, ""),
+    Annotation = ifelse(row_number() == 1, Annotation, ""),
+    `Description, Phecode` = ifelse(row_number() == 1, `Description, Phecode`, "")
+  ) %>%
+  ungroup() %>%
+  select(-phecode,-POS,-fdr_sig)
+
+snp_table2_afr
+nrow(snp_table2_afr)
+```
+
+
+```{r}
+snp_table2 <- bind_rows(snp_table2_eur, snp_table2_afr) %>%
+  select(`BP/REF/ALT`, dbSNP, everything()) %>% #reorder
+  dplyr::rename(`Adj. P-value` = `FDR Adjusted P-value`)
+```
+
+
+Use flextable to output formatted tables to .docx
+```{r}
+#reset
+init_flextable_defaults()
+
+# Set global defaults
+set_flextable_defaults(
+  font.size = 8,
+  font.family = "Calibri",
+  border.color = "black",
+  border.style = "solid",
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2
+)
+
+seps <- snp_table2 %>% mutate(grp = cumsum(dbSNP != "")) %>% 
+  count(grp) %>% .$n %>% cumsum()
+
+sigrows <- snp_table2 %>% 
+  mutate(rn = row_number(),
+         sig = as.numeric(`Adj. P-value`) <= 0.05) %>%
+  filter(sig) %>% .$rn
+
+flextable2 <- flextable(snp_table2) %>% 
+  autofit() %>% 
+  # light lines to separate distinct snps/traits
+  hline(i = seps, border = fp_border(color="gray")) %>%
+  # thick border to separate ancestries
+  hline(i = nrow(snp_table2_eur), border = fp_border(width = 2)) %>%
+  # bold significant results
+  bold(i= sigrows,
+       j = 6:10) %>%
+  # bold this one since ref/alt are switched
+  bold(i = ~(snp_table2$`BP/REF/ALT` == "10398/G/A"),
+       j = 1) %>%
+  bold(part = "header") %>%
+  hline(i = nrow(snp_table2), border = fp_border(width = 2))
+
+tablesdoc <- tablesdoc %>%
+  body_add_flextable(flextable2) %>%
+  body_end_section_landscape()
+```
+
+# SNPs for replication in UKB
+```{r}
+snp_for_UKBrepl <- d_sig_fdr %>%
+  filter(Ancestry == "EUR") 
+
+# fwrite(snp_for_UKBrepl, 
+#        paste0(output_dir, "mvp_MTSNP_for_UKBreplication_2025.txt"))
+```
+
+# Chapter enrichment - Fischers test
+```{r}
+cat_exp <- d_snp_clean %>% 
+  distinct(phecode, POS, Ancestry, Subgroup, description, group) %>% 
+  filter(group != "") %>% 
+  count(group) %>% 
+  mutate(prop = n/sum(n))
+cat_obs <- d_sig_fdr %>% 
+  distinct(phecode, POS, Ancestry, Subgroup) %>% 
+  left_join(pheinfo) %>%  
+  filter(group != "") %>% 
+  count(group) %>% 
+  mutate(prop = n/sum(n))
+
+cat_exp
+cat_obs
+
+fisher_mat <- cat_exp %>% 
+  select(group, n_total = n) %>%
+  full_join(cat_obs %>% select(group, n_sig = n)) %>%
+  mutate(n_not_sig = n_total - n_sig) %>%
+  select(-n_total) %>% 
+  tibble::column_to_rownames("group") %>% 
+  as.matrix()
+
+fisher_mat
+fisher.test(fisher_mat, simulate.p.value = TRUE, B=1e6)
+fisher.test(fisher_mat, alternative = "greater", simulate.p.value = TRUE, B=1e6)
+```
+
+
+# Figure 1a - allele frequency circle plot
+
+This image will be included in the biorender image in figure 1
+
+- Functions and colors to use in plots
+```{r}
+# Function to lighten colors
+lighten_col <- function(col, amount=0.4){
+  newcol_char <- colorspace::lighten(
+    col, amount=amount, method="relative", space = "combined") #space = "HCL"
+  return(newcol_char)
+}
+
+#Use different purples for tRNAs
+colours_solid <- c("Control-Region" = "lightblue4",
+                   "tRNA" = "magenta4",
+                   "TR" = "magenta4",
+                   "TF" = "magenta4",
+                   "RNR1" = "mediumaquamarine",
+                   "TV" = "magenta4",
+                   # "Non-Coding" = "sienna4",
+                   "RNR2" = "aquamarine",
+                   "TL1" = "magenta4",
+                   "ND1" = "brown",
+                   "TI" = "magenta3",
+                   "TQ" = "magenta4",
+                   "TM" = "magenta3",
+                   "ND2" = "mediumblue",
+                   "TN" = "magenta4",
+                   "TW" = "magenta4",
+                   "TA" = "magenta3",
+                   "TC" = "magenta3",
+                   "TY" = "magenta4",
+                   "CO1" = "olivedrab",
+                   "TK" = "magenta4",
+                   "CO2" = "orange2",
+                   "TD" = "magenta4",
+                   "TS1" = "magenta3",
+                   "ATP8" = "orchid4",
+                   "ATP6" = "red3",
+                   "CO3" = "royalblue2",
+                   "TG" = "magenta4",
+                   "ND3" = "palegreen4",
+                   "ND4L" = "grey0",
+                   "ND4" = "pink4",
+                   "TH" = "magenta4",
+                   "TS2" = "magenta3",
+                   "TL2" = "magenta4",
+                   "ND5" = "yellow4",
+                   "ND6" = "steelblue4",
+                   "TE" = "magenta4",
+                   "CYB" = "tan1",
+                   "TT" = "magenta3",
+                   "TP" = "magenta4")
+colours <- lapply(colours_solid, lighten_col) %>% unlist()
+
+# scales::show_col(unique(colours))
+```
+
+```{r}
+#Allele frequency summary statistics
+dat <- all_afreqs %>%
+  filter(Subgroup == "All") %>%
+  mutate(
+    MAF = A1_FREQ,
+    `Allele Frequency` = as.character(cut(MAF, c(
+      0, 0.0001, 0.001, 0.002, 0.02, .5
+    ))),
+    `Allele Frequency` = coalesce(`Allele Frequency`, "0"),
+    `Allele Frequency` = factor(
+      `Allele Frequency`,
+      levels = c(
+        "0",
+        "(0,0.0001]",
+        "(0.0001,0.001]",
+        "(0.001,0.002]",
+        "(0.002,0.02]",
+        "(0.02,0.5]"
+      )
+    ),
+    Ancestry = factor(Ancestry, levels = c("EUR", "AFR", "AMR", "EAS"))
+  )
+
+# Midpoints in genes, to add labels
+midps <- refflat %>%
+  group_by(gene) %>%
+  summarize(x = round((end - start) / 2 + start), y = -0.5) %>%
+  bind_rows(data.frame(gene = "Control-Region", x = 200, y = -0.1)) %>%
+  arrange(x)
+
+
+#Plot solarplot, not including including MAF=0
+c_radius <- 10
+
+solarplot_afreq <- dat %>%
+  filter(MAF > 0) %>%
+  ggplot() +
+  ylim(0, c_radius + 1) +
+  # AF points
+  geom_point(
+    aes(
+      x = POS,
+      y = c_radius - 1.5 * as.numeric(as.factor(Ancestry)) -
+        as.numeric(as.factor(`Allele Frequency`)) / 20,
+      color = `Allele Frequency`
+    ),
+    size = 1
+  ) +
+  # Ancestry track labels
+  geom_text(aes(
+    x = median(dat$POS) - 300,
+    y = c_radius - 1.5 * as.numeric(as.factor(Ancestry)) -
+      0.75,
+    label = Ancestry
+  ),
+  hjust = "left") +
+  coord_polar(direction = 1) + ##direction = -1) +
+  # Gene tracks
+  geom_rect(
+    data = refflat,
+    aes(
+      xmin = start,
+      xmax = end,
+      ymin = c_radius - 1,
+      ymax = c_radius - 0.1,
+      fill = gene
+    ),
+    show.legend = F,
+    inherit.aes = F
+  ) +
+  guides(fill = guide_legend(ncol = 2)) +
+  guides(color = guide_legend(ncol = 1)) +
+  scale_fill_manual(
+    values = colours,
+    "Genes",
+    breaks = names(colours),
+    labels = names(colours)
+  ) +
+  scale_color_manual(
+    values = c("gray50", "brown", "blue", "green", "orange", "red"),
+    "Allele Frequency",
+    breaks = levels(dat$`Allele Frequency`),
+    labels = levels(dat$`Allele Frequency`)
+  ) +
+  xlab("") + ylab("") +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    legend.key.size = unit(.5, 'cm'),
+    legend.text = element_text(size = 10),
+    legend.position = "inside"
+  ) +
+  geom_text_repel(
+    data = midps,
+    aes(x = x, y = c_radius, label = gene),
+    nudge_y = 0.5,
+    min.segment.length = 1.5 ,
+    inherit.aes = F
+  )
+
+solarplot_afreq
+
+ggsave(paste0(image_dir, "solarplot_afreqs_GIA.png"),
+       plot = solarplot_afreq,
+       w=12, h=10, dpi=400, bg = "white")
+```
+
+# Figure 1b - What SNPs / phecodes for the circle plot?
+```{r}
+Fig1Helper <- d_sig_fdr %>% 
+  distinct(Locus, `BP/REF/ALT`, phecode, Ancestry, Subgroup) %>% 
+  filter(Subgroup != "Non-DM") %>%
+  arrange(Locus) %>% 
+  mutate(popgroup = paste0(Ancestry, Subgroup)) %>%
+  select(-c(Ancestry, Subgroup)) %>%
+  group_by(Locus, `BP/REF/ALT`, phecode) %>%
+  summarize(grps = paste0(popgroup, collapse = ", ")) %>%
+  left_join(pheinfo %>% select(phecode, group, description)) 
+
+#View(Fig1Helper)
+```
+
+
+
+# Table 3 - UKB replication results
+
+We will also use these for forest plots
+```{r}
+ORs <- d_snp_all %>%
+  mutate(LCI = signif(L95, 3),
+         UCI = signif(U95, 3)) %>%
+  select(OR, BETA, LCI, UCI, POS, phecode, Ancestry, Subgroup)
+```
+
+
+```{r}
+# join UKB replication results
+MVP_vs_UKB_repl <- UKB_repl %>%
+  mutate(Ancestry = "EUR") %>%
+  filter(ERRCODE == ".") %>%
+  select(
+    `BP/REF/ALT`,
+    Subgroup,
+    Ancestry,
+    phecode,
+    UKB_trait,
+    `UKB # Cases / N (%)`,
+    `UKB Alt AF`,
+    `UKB P` = P,
+    `UKB OR (95% CI)`,
+    priority
+  ) %>%
+  right_join(d_sig_fdr %>% filter(Ancestry == "EUR")) %>%
+  ## exclude 244, only report 244.4
+  filter(phecode != "244") %>%
+  filter(Subgroup != "Non-DM") %>%
+  left_join(d_snp_clean) %>%
+  left_join(ORs)
+
+# Format the table for output
+Table3 <- MVP_vs_UKB_repl %>%
+  mutate(
+    Replicated = case_when(
+      is.na(`UKB Alt AF`) ~ "Not Genotyped",
+      is.na(`UKB # Cases / N (%)`) ~ "Phenotype not defined",
+      `UKB P` < 0.05 ~ "Yes",
+      `UKB P` > 0.05 ~ "No",
+      TRUE ~ "--"
+    ),
+    Annotation = gsub("missense, ", "", Annotation),
+    Annotation = ifelse(grepl("MT-RNR", Locus), "rRNA", Annotation),
+    Annotation = coalesce(Annotation, "Non-coding"),
+    `Description, Phecode` = gsub(" NOS", "", `Description, Phecode`),
+    Locus = gsub("MT-", "", Locus),
+    `OR (95% CI)` = paste0(signif(OR, 3), " (", signif(LCI, 3), "-", signif(UCI, 3), ")"),
+    `UKB P` = signif(`UKB P`, 2),
+    UKB_trait = gsub("hypothyroidism_|CHF_|phe_|_mc2", "", UKB_trait),
+    UKB_trait = gsub("_", ".", UKB_trait)
+  ) %>%
+  group_by(Subgroup, POS, phecode) %>%
+  arrange(Subgroup, POS, phecode, priority) %>%
+  mutate(any_repl = any(Replicated == "Yes")) %>%
+  filter(!any_repl | Replicated == "Yes") %>%
+  filter((Replicated == "Yes" & row_number() == 1) |
+           (Replicated != "Yes" & row_number() == n())) %>%
+  ungroup() %>%
+  arrange(Subgroup, 
+          POS, phecode) %>% 
+  mutate(Subgroup = ifelse(!is.na(lag(Subgroup)) &
+                             Subgroup == lag(Subgroup), "", Subgroup)) %>%
+  mutate(P = scientific(P, digits = 2)) %>%
+  select(
+    Subgroup,
+    `BP/REF/ALT`,
+    Locus,
+    Annotation,
+    `Description, Phecode`,
+    # MVP
+    `# Cases / N (%)`,
+    `Alt AF`,
+    P,
+    `OR (95% CI)`,
+    # UKB
+    starts_with("UKB"),
+    Replicated
+  ) %>%
+  mutate(
+    `UKB OR (95% CI)` = ifelse(Replicated == "Not Genotyped",
+                               "Not Genotyped", `UKB OR (95% CI)`),
+    Replicated = ifelse(Replicated == "Not Genotyped", "--", Replicated)
+  ) %>%
+  mutate(
+    `UKB OR (95% CI)` = ifelse(
+      `Description, Phecode` == "Encounter for long-term (current) use of aspirin, 457.3",
+      "Phenotype not defined",
+      `UKB OR (95% CI)`
+    )
+  ) %>%
+  mutate(UKB_trait = ifelse(`UKB OR (95% CI)` == "Phenotype not defined",
+                            "None", UKB_trait)) %>%
+  mutate(UKB_trait = gsub("direct", "", UKB_trait))
+
+#Table3 %>% View(.)
+```
+
+Add flextable
+```{r}
+#reset
+init_flextable_defaults()
+
+# Set global defaults
+set_flextable_defaults(
+  font.size = 8,
+  font.family = "Calibri",
+  border.color = "black",
+  border.style = "solid",
+  padding.top = 0,
+  padding.bottom = 0, 
+  padding.left = 1,
+  padding.right = 4
+)
+
+seps3 <- Table3 %>% mutate(grp = cumsum(Subgroup != "")) %>%
+  count(grp) %>% .$n %>% cumsum()
+
+flextable3 <- flextable(Table3 %>%
+                          dplyr::rename(Trait = UKB_trait,
+                                        AltAF = `UKB Alt AF`)) %>%
+  hline(i = seps3,
+        border = fp_border(color = "gray")) %>%
+  bold(i = which(Table3$Replicated == "Yes")) %>%
+  hline(i = nrow(Table3), border = fp_border(width = 2)) %>%
+  bold(part = "header")
+
+flextable3 <-
+  width(flextable3, width = dim_pretty(flextable3)$widths)
+flextable3 <- width(flextable3, j = c(5), width = c(1.5))
+
+#Save flextable to existing doc
+tablesdoc <- tablesdoc %>%
+  body_add_flextable(flextable3) %>%
+  body_end_section_landscape()
+```
+
+# SNP-based interaction results (by T2D and Sex)
+Create the forest plots
+
+## Figure 2: Forestplot in the manuscript (male vs female) 
+- significant results in subgroups, and add interaction p-value
+
+```{r}
+#Add all three subgroups for sex
+intx_sex_broad <- d_sig_fdr %>%
+  filter(Subgroup %in% c("Males", "Females")) %>%
+  distinct(POS, phecode, Ancestry) %>%
+  left_join(d_snp_all_fmt) %>% # include results that didn't pass filters
+  filter(Subgroup %in% c("All", "Males", "Females")) %>%
+  left_join(intx_sex %>% distinct(Ancestry, phecode, POS, intx_sex_pval)) %>%
+  left_join(ORs) %>%
+  # Don't display bars for the ones we didn't include
+  mutate(
+    OR = ifelse(is.na(fdr_sig), NA, OR),
+    LCI = ifelse(is.na(fdr_sig), NA, LCI),
+    UCI = ifelse(is.na(fdr_sig), NA, UCI)
+  ) %>%
+  group_by(POS, phecode, Ancestry) %>%
+  # Don't include the ones that are already in the main result
+  filter(!(any(Subgroup == "All" & fdr_sig))) %>%
+  ungroup()
+
+# Data for forestplot
+dat_forestplot_sex <- intx_sex_broad %>%
+  mutate( intx_pval = intx_sex_pval, 
+         Population = factor(Subgroup, levels = c("All", "Females", "Males")),
+         intx_pval = scientific(intx_pval, digits = 3),
+         intx_pval_print = ifelse(`FDR Adjusted P-value` == "-", 
+                                   "-", as.character(intx_pval)),
+         Ancestry = factor(Ancestry, levels = c("EUR", "AFR", "AMR"))
+         ) %>%   
+  group_by(Ancestry, phecode, POS) %>% 
+  mutate(pval = ifelse(any(intx_pval_print == "-"), "-", intx_pval_print)) %>%
+  #Don't repeat certain column values on each row - repetitive
+  mutate(across(c( #Ancestry, 
+                  pval, 
+                  dbSNP, Locus, `BP/REF/ALT`, `Description, Phecode`,
+                 Annotation), 
+                function(x){ x[2:3] <- ""; return(x) } 
+         )) %>%
+  ## Put phecode on a new line, maintain centering
+  # mutate(Ancestry = factor(Ancestry, levels = c("EUR", "AFR"))) %>%
+  arrange(Ancestry, POS, phecode) %>% 
+  mutate(`Description, Phecode` = paste0("\n", gsub(",", ",\n", `Description, Phecode`)),
+         Ancestry = as.character(Ancestry),
+         Ancestry = ifelse(row_number() == 1, Ancestry, "")
+         ) %>%
+  ungroup() %>%
+  select(Ancestry, `BP/REF/ALT`, dbSNP, 
+         Gene = Locus,
+         Annotation, `Description, Phecode`,
+         Population = Subgroup,
+         `# Cases / N (%)`, `Alt AF`, `OR (95% CI), P-value`, 
+         `Adj. P-value` = `FDR Adjusted P-value` ,
+         `Int. P-value` = pval, OR, LCI, UCI
+         )
+```
+
+
+```{r}
+# data for the horizontal bars
+from_rmeta_sex <- 
+  structure(list(
+    mean  = c(NA, dat_forestplot_sex$OR), 
+    lower = c(NA, dat_forestplot_sex$LCI),
+    upper = c(NA, dat_forestplot_sex$UCI)),
+    .Names = c("mean", "lower", "upper"), 
+    row.names = c(NA, -(nrow(dat_forestplot_sex) + 1) ),
+    class = "data.frame")
+
+dat_forestplot_sex <- dat_forestplot_sex %>% 
+  select(-c(OR, LCI, UCI))
+
+tabletext_sex <- rbind(colnames(dat_forestplot_sex), 
+                       as.matrix(dat_forestplot_sex))
+```
+
+Format and create the table/figure
+```{r}
+# # lines
+thinner_par <- list(NULL, NULL, gpar(col="#444444", lwd = 0.1)) 
+thin_par <- list(NULL, NULL, gpar(col="#444444")) 
+thick_par <- list(NULL, NULL, gpar(col="#444444", lwd = 4))
+
+hlines_sex <- c(
+  list(NULL, #top border
+       gpar(col="#444444", lwd = 4)), #border under column names
+  rep(thin_par, 6), # EUR - inside borders
+  thick_par, #thick border between EUR and AFR
+  rep(thin_par, 8), # AFR - inside borders
+  thick_par,
+  rep(thin_par, 2), # AMR - inside borders
+  list(NULL, #last 2 entries
+       NULL, #last 2 entries
+       gpar(col="#444444", lwd = 4)) #bottom border
+)
+
+fpt_sex <- forestplot(labeltext = tabletext_sex, 
+           from_rmeta_sex,
+           is.summary= c(T, rep(F, nrow(tabletext_sex)-1)),
+           align = c(rep("l", ncol(tabletext_sex)-2), "r", "r"),
+           hrzl_lines = hlines_sex,
+           xlog = T, xlab = "OR", xticks.digits = 1,
+           new_page = T,
+           graph.pos = 8, boxsize = 0.3, lwd.ci = 3, 
+           col = fpColors(box="royalblue",line="darkblue"),
+           colgap = unit(.05, "npc"),
+           txt_gp = fpTxtGp(cex = 2, 
+                            ticks = gpar(cex = 1.8), 
+                            xlab = gpar(cex = 1.8),
+                            label = list(gpar(fontface = "bold"))),
+
+           line.margin = 0.3)
+
+# Save image as png
+png(paste0(image_dir, "Forestplot_by_sex.png"),
+     width = 45,
+     height = 25,
+     units = 'in',
+     res = 300)
+
+fpt_sex
+
+dev.off()
+```
+
+Also need this as pdf for final submission to Nature Comms; make some tweaks to get it to fit within required dimensions
+```{r}
+tabletext_sex_pdf <- tabletext_sex
+tabletext_sex_pdf[,"Gene"] <- gsub("MT-", "", tabletext_sex_pdf[,"Gene"])
+##tabletext_sex_pdf <- tabletext_sex_pdf[,-3] 
+tabletext_sex_pdf[,"Annotation"] <- 
+  gsub("missense, ", "\nmissense,\n", tabletext_sex_pdf[,"Annotation"])
+tabletext_sex_pdf[,"Annotation"] <- 
+  gsub("start_lost, ", "\nstart_lost,\n", tabletext_sex_pdf[,"Annotation"])
+tabletext_sex_pdf[,"Description, Phecode"] <- 
+  gsub("\nIntestinal disaccharidase deficiencies and disaccharide malabsorption,\n 271.3",
+       "\nIntestinal disaccharidase deficiencies and\ndisaccharide malabsorption, 271.3", 
+       tabletext_sex_pdf[,"Description, Phecode"])
+
+tabletext_sex_pdf[,"Description, Phecode"] <- 
+  gsub("\nDisorders of carbohydrate transport and metabolism,\n 271",
+       "\nDisorders of carbohydrate transport and\nmetabolism, 271", 
+       tabletext_sex_pdf[,"Description, Phecode"])
+
+tabletext_sex_pdf[1, colnames(tabletext_sex_pdf) == "Adj. P-value"] <- "Adj. P"
+tabletext_sex_pdf[1, colnames(tabletext_sex_pdf) == "Int. P-value"] <- "Int. P"
+tabletext_sex_pdf[1, colnames(tabletext_sex_pdf) == "BP/REF/ALT"] <- "BP/Ref/Alt"
+
+hlines_sex_pdf <- c(
+  list(NULL, #top border
+       gpar(col="#444444", lwd = 1.5)), #border under column names
+  rep(thinner_par, 6), # EUR - inside borders
+  thin_par, #thick border between EUR and AFR
+  rep(thinner_par, 8), # AFR - inside borders
+  thin_par,
+  rep(thinner_par, 2), # AMR - inside borders
+  list(NULL, #last 2 entries
+       NULL, #last 2 entries
+       gpar(col="#444444", lwd = 1.5)) #bottom border
+)
+
+txtgp <- 0.9
+fpt_sex_pdf <- forestplot(labeltext = tabletext_sex_pdf, 
+           from_rmeta_sex,
+           is.summary= c(T, rep(F, nrow(tabletext_sex_pdf)-1)),
+           align = c(rep("l", ncol(tabletext_sex_pdf)-2), "r", "r"),
+           hrzl_lines = hlines_sex_pdf,
+           xlog = T, xlab = "OR", xticks.digits = 1,
+           new_page = T,
+           graph.pos = 8, 
+           boxsize = 0.4, lwd.ci = 1, 
+           col = fpColors(box="royalblue",line="darkblue"),
+           colgap = unit(.01, "npc"),
+           txt_gp = fpTxtGp(
+             cex = txtgp, 
+             ticks = gpar(cex = txtgp), 
+             xlab = gpar(cex = txtgp),
+             #label = list(gpar(fontface = "bold")),
+             summary = list(gpar(fontface = "bold"))
+             ),
+           line.margin = 0.3,
+           graphwidth = unit(1, 'in'))
+
+pdf(paste0(image_dir, "Forestplot_by_sex.pdf"),
+     width = 8.2,
+    height = 6,
+     pointsize = 1,
+    family = "Helvetica",
+    colormodel = "srgb"
+    )
+
+fpt_sex_pdf
+
+dev.off()
+```
+
+
+## Figure 3: Forestplot  in the manuscript (T2D vs non-diabetes)
+- Anything significant in T2D-only
+- all interaction tests whether significant or not 
+- we chose not to discuss those significant in non-DM only
+```{r}
+# Add all three subgroups for sex
+intx_t2d_broad <- d_sig_fdr %>%
+  filter(Subgroup == "T2D") %>%
+  distinct(POS, phecode, Ancestry) %>%
+  left_join(d_snp_all_fmt) %>% # include results that didn't pass filters
+  filter(Subgroup %in% c("All", "T2D", "Non-DM")) %>%
+  left_join(intx_t2d %>% distinct(Ancestry, phecode, POS, intx_t2d_pval)) %>%
+  left_join(ORs) %>%
+  # Don't display bars for the ones we didn't include
+  mutate(
+    OR = ifelse(is.na(fdr_sig), NA, OR),
+    LCI = ifelse(is.na(fdr_sig), NA, LCI),
+    UCI = ifelse(is.na(fdr_sig), NA, UCI)
+  ) %>%
+  group_by(POS, phecode, Ancestry) %>%
+  # Don't include the ones that are already in the main result
+  filter(!(any(Subgroup == "All" & fdr_sig))) %>%
+  ungroup()
+
+# Data for forestplot
+dat_forestplot_t2d <- intx_t2d_broad %>%
+  mutate(
+    intx_pval = intx_t2d_pval,
+    Population = factor(
+      Subgroup,
+      levels = c("All", "T2D", "Non-DM"),
+      labels = c("All", "T2D", "Non DM")
+    ),
+    intx_pval = scientific(intx_pval, digits = 3),
+    intx_pval_print = ifelse(`FDR Adjusted P-value` == "-",
+                             "-", as.character(intx_pval)),
+    Ancestry = factor(Ancestry, levels = c("EUR", "AFR", "AMR"))
+  ) %>%
+  group_by(Ancestry, phecode, POS) %>% 
+  arrange(Ancestry, POS, phecode) %>%
+  mutate(pval = ifelse(any(intx_pval_print == "-"), "-", intx_pval_print)) %>%
+  #Don't repeat certain column values on each row - repetitive
+  mutate(across(c( pval, 
+                  dbSNP, Locus, `BP/REF/ALT`, `Description, Phecode`,
+                 Annotation), 
+                function(x){ x[2:3] <- ""; return(x) }
+         )) %>%
+  ## Put phecode on a new line, maintain centering
+  mutate(
+    `Description, Phecode` = paste0("\n", gsub(",", ",\n", `Description, Phecode`)),
+    #Ancestry = factor(Ancestry, levels = c("EUR", "AFR"))
+    Ancestry = as.character(Ancestry),
+    Ancestry = ifelse(row_number() == 1, Ancestry, "")
+  ) %>%
+  ungroup() %>%
+  select(
+    Ancestry,
+    `BP/REF/ALT`,
+    dbSNP,
+    Gene = Locus,
+    Annotation,
+    `Description, Phecode`,
+    Population = Subgroup,
+    `# Cases / N (%)`,
+    `Alt AF`,
+    `OR (95% CI), P-value`,
+    `Adj. P-value` = `FDR Adjusted P-value`,
+    `Int. P-value` = pval,
+    OR,
+    LCI,
+    UCI
+  )
+
+# data for the horizontal bars
+from_rmeta_t2d <- 
+  structure(list(
+    mean  = c(NA, dat_forestplot_t2d$OR), 
+    lower = c(NA, dat_forestplot_t2d$LCI),
+    upper = c(NA, dat_forestplot_t2d$UCI)),
+    .Names = c("mean", "lower", "upper"), 
+    row.names = c(NA, -(nrow(dat_forestplot_t2d) + 1) ),
+    class = "data.frame")
+
+dat_forestplot_t2d <- dat_forestplot_t2d %>% 
+  select(-c(OR, LCI, UCI)) 
+
+# data for text to display
+tabletext_t2d <- rbind(colnames(dat_forestplot_t2d), 
+                       as.matrix(dat_forestplot_t2d))
+```
+
+Format and save the plot
+```{r}
+# Not including NDM
+hlines_t2d <- c(
+  list(NULL, #top border
+       gpar(col="#444444", lwd = 4)), #border under column names
+  thick_par, 
+  thick_par, 
+  thick_par,
+  thick_par #bottom border
+)
+
+fpt_t2d <- forestplot(tabletext_t2d, 
+           from_rmeta_t2d,
+           is.summary= c(T, rep(F, nrow(tabletext_t2d)-1)),
+           align = c(rep("l", ncol(tabletext_t2d)-2), "r", "r"),
+           hrzl_lines = hlines_t2d,
+           xlog = T, xlab = "OR", xticks.digits = 1,
+           new_page = T,
+           graph.pos = 8, boxsize = 0.3, lwd.ci = 3, 
+           col = fpColors(box="royalblue",line="darkblue"),
+           colgap = unit(.05, "npc"),
+           txt_gp = fpTxtGp(cex = 2, 
+                            ticks = gpar(cex = 1.8), 
+                            xlab = gpar(cex = 1.8),
+                            label = list(gpar(fontface = "bold"))),
+
+           line.margin = 0.3)
+
+# Save as png
+png(paste0(image_dir, "Forestplot_by_t2d.png"),
+     width = 45,
+     height = 12,
+     units = 'in',
+     res = 300)
+
+fpt_t2d
+
+dev.off()
+```
+
+Also need this as pdf for final submission to Nature Comms
+```{r}
+tabletext_t2d_pdf <- tabletext_t2d
+tabletext_t2d_pdf[,"Gene"] <- gsub("MT-", "", tabletext_t2d_pdf[,"Gene"])
+##tabletext_t2d_pdf <- tabletext_t2d_pdf[,-3] 
+tabletext_t2d_pdf[,"Annotation"] <- 
+  gsub("missense, ", "\nmissense,\n", tabletext_t2d_pdf[,"Annotation"])
+tabletext_t2d_pdf[,"Annotation"] <- 
+  gsub("start_lost, ", "\nstart_lost,\n", tabletext_t2d_pdf[,"Annotation"])
+tabletext_t2d_pdf[,"Description, Phecode"] <-
+  gsub("\nDisorders of the pituitary gland and its hypothalamic control,\n 253",
+       "\nDisorders of the pituitary gland and\nits hypothalamic control, 253",
+       tabletext_t2d_pdf[,"Description, Phecode"])
+
+
+tabletext_t2d_pdf[1, colnames(tabletext_t2d_pdf) == "Adj. P-value"] <- "Adj. P"
+tabletext_t2d_pdf[1, colnames(tabletext_t2d_pdf) == "Int. P-value"] <- "Int. P"
+tabletext_t2d_pdf[1, colnames(tabletext_t2d_pdf) == "BP/REF/ALT"] <- "BP/Ref/Alt"
+
+hlines_t2d_pdf <- c(
+  list(NULL, #top border
+       gpar(col="#444444", lwd = 1.5)), #border under column names
+  thin_par, 
+  thin_par, 
+  thin_par,
+  list(NULL, #last 2 entries
+       NULL, #last 2 entries
+       gpar(col="#444444", lwd = 1.5)) #bottom border
+)
+
+# Adjust text size
+txtgp <- 0.9
+
+fpt_t2d_pdf <- forestplot(labeltext = tabletext_t2d_pdf, 
+           from_rmeta_t2d,
+           is.summary= c(T, rep(F, nrow(tabletext_t2d_pdf)-1)),
+           align = c(rep("l", ncol(tabletext_t2d_pdf)-2), "r", "r"),
+           hrzl_lines = hlines_t2d_pdf,
+           xlog = T, xlab = "OR", xticks.digits = 1,
+           new_page = T,
+           graph.pos = 8, 
+           boxsize = 0.4, lwd.ci = 1, 
+           col = fpColors(box="royalblue",line="darkblue"),
+           colgap = unit(.01, "npc"),
+           txt_gp = fpTxtGp(
+             cex = txtgp, 
+             ticks = gpar(cex = txtgp), 
+             xlab = gpar(cex = txtgp),
+             #label = list(gpar(fontface = "bold")),
+             summary = list(gpar(fontface = "bold"))
+             ),
+           line.margin = 0.3,
+           graphwidth = unit(1, 'in'))
+
+# Save to pdf
+pdf(paste0(image_dir, "Forestplot_by_t2d.pdf"),
+     width = 8.2,
+     #height = 7.2,
+    height = 2,
+     pointsize = 1,
+    family = "Helvetica",
+    colormodel = "srgb"
+    )
+
+fpt_t2d_pdf
+
+dev.off()
+```
+
+
+# Gene-based results (phecodes and biomarkers)
+Filter results
+```{r, message=F}
+fdr = 0.05
+
+d_gene_clean <- d_gene_all %>%
+  filter(observations >= 500 &
+           (n_cases >= 500 | is.na(n_cases))) %>%
+  filter(n_ctrls >= 500 | is.na(n_ctrls)) %>%
+  select(-n_ctrls) %>%
+  group_by(Ancestry, Subgroup) %>%
+  mutate(P.value.adj.fdr = p.adjust(P.value, "BH"))
+```
+
+```{r}
+d_gene_clean %>%
+  distinct(trait, SetID, Ancestry, Subgroup) %>%
+  nrow()
+```
+
+
+### Significant gene-based results (FDR)
+```{r}
+gene_sig_fdr <- d_gene_clean  %>%
+  filter(P.value.adj.fdr <= fdr)
+```
+
+
+```{r}
+# BP ranges for non-TRNA genesets
+bprange <- refflat %>%
+  filter(!grepl("^T", gene)) %>%
+  # this is on 1-based scale
+  mutate(BP = paste0( start, "-", end)) %>%
+  mutate(SetID = paste0("MT-", gene)) %>% 
+  dplyr::select(-gene, -start, -end)
+```
+
+
+### Table 4 - significant gene-based results
+Write out MT-gene significant results suitable for table 4.
+```{r}
+table4 <- gene_sig_fdr %>%
+  left_join(bprange) %>%
+  mutate(
+    Symbol = gsub("MT-", "", SetID),
+    #Ancestry = gsub("_GIA", "", RACE),
+    Gene = gsub("MT-", "", SetID),
+    bpstart = as.numeric(gsub("-.*", "", BP)),
+    Population = Subgroup,
+    `# Cases / N (%)` =
+      ifelse(
+        n_cases < 500,
+        " < 500",
+        paste(
+          formatC(n_cases, format = "d", big.mark = ","),
+          "/",
+          formatC(observations,
+                  format = "d", big.mark = ","),
+          paste0("(", round(prop_cases * 100, 1), "%)"),
+          sep = " "
+        )
+      ),
+    Trait = coalesce(biomarker_key[trait], phecode),
+    P = scientific(P.value, digits = 3),
+    P.value.adj.fdr = scientific(P.value.adj.fdr, digits = 3)
+  ) %>% 
+  left_join(pheinfo) %>%
+  ungroup() %>%
+  mutate(Ancestry = factor(
+    Ancestry,
+    levels = c("EUR", "AFR", "AMR", "EAS"),
+    labels = c("EUR", "AFR", "AMR", "EAS")
+  )) %>% 
+  dplyr::select(Population, Ancestry, BP, Gene, `# Markers` = N.Marker.Test, 
+         `# Cases / N (%)`, Trait, description, Chapter = group, bpstart, 
+         `P-value` = P, `Adj. P-value` = P.value.adj.fdr) %>%
+  arrange(Population, Ancestry, bpstart, `P-value`) %>%
+  dplyr::select(-bpstart) 
+```
+
+
+Make the flextable and add it to the existing object
+```{r}
+#reset
+init_flextable_defaults()
+
+# Set global defaults
+set_flextable_defaults(
+  font.size = 8,
+  font.family = "Calibri",
+  border.color = "black",
+  border.style = "solid",
+  padding.top = 0, 
+  padding.bottom = 0, 
+  padding.left = 2, 
+  padding.right = 2
+)
+
+table4 <- table4 %>%
+  ungroup() %>% 
+  mutate(grp1 = cumsum(coalesce(Population != lag(Population) |
+                                Ancestry != lag(Ancestry), FALSE)))
+
+flextable4 <- flextable(table4 %>% 
+                          select(-grp1) %>% 
+                          mutate(`# Markers` = as.character(`# Markers`))
+                        ) %>% 
+                       autofit() %>%
+                       hline(i = table4 %>% count(grp1) %>% .$n %>% cumsum(),
+                             border = fp_border(color="gray")) %>%
+                       hline(i = table4 %>% count(Population) %>% .$n %>% cumsum(),
+                             border = fp_border(width = 1.5)) %>%
+  bold(part = "header")
+
+tablesdoc <- tablesdoc %>%
+  body_add_flextable(flextable4) %>%
+  body_end_section_landscape()
+```
+
+###  What Loci are significant in both SNP- and gene-based analyses?
+```{r}
+cond_anly <-
+  d_sig_fdr %>% distinct(POS, Locus, phecode, Ancestry, Subgroup) %>%
+  inner_join(
+    gene_sig_fdr %>%
+      ungroup() %>%
+      distinct(Locus = SetID, phecode, Ancestry, Subgroup, description, P.value)
+  )
+cond_anly
+```
+
+### What are all the associated Loci and traits?
+Combining SNP- and gene-based
+```{r}
+# d_sig_fdr %>% distinct(Locus, phecode) %>%
+#   bind_rows(gene_sig_fdr %>% ungroup() %>%
+#               distinct(Locus = SetID, phecode)) %>%
+#   arrange(Locus) %>%
+#   left_join(pheinfo %>% select(phecode, description))
+```
+
+
+# Supplementary Figure 1 - Flowchart
+```{r}
+# flowchart
+flowchart <- DiagrammeR::grViz(paste0("
+                  digraph flowchart {
+                  graph [layout = dot, rankdir = TB]
+
+                  node [shape = box, style = filled, fillcolor = white, margin=0.3]
+
+                  A [label = '", flowchart_data$text[1], "']
+                  B [label = '", flowchart_data$text[2], "']
+                  C [label = '", flowchart_data$text[3], "']
+                  D [label = '", flowchart_data$text[4], "']
+                  E [label = '", flowchart_data$text[5], "']
+                  F [label = '", flowchart_data$text[6], "']
+                  G [label = '", flowchart_data$text[7], "']
+                  H [label = '", flowchart_data$text[8], "']
+                  I [label = '", flowchart_data$text[9], "']
+                  J [label = '", flowchart_data$text[10], "']
+
+                  A -> B -> C -> D -> E -> F
+                  F -> G
+                  F -> H
+                  F -> I
+                  F -> J
+                  }
+                  "))
+flowchart
+```
+
+
+Export flowchart to png
+```{r}
+svg <- export_svg(flowchart)
+rsvg_png(
+  charToRaw(svg),
+  file = paste0(image_dir, "flowchart.png"),
+  width = 96 * 7,
+  height = 96 * 10
+)
+```
+
+# Supplementary Figure 12 (Solar plot for genebased analysis)
+
+Input data setup
+```{r}
+# Length of genes
+refflat_length <- refflat %>%
+  dplyr::rename(Gene = gene) %>%
+  # Add +  1 to length now that we added + 1 to start
+  mutate(
+    gene_length = end - start + 1,
+    # Helps when labelling genes
+    small_gene = ifelse(gene_length < 350, 1, 0),
+    # Rotation/angle for gene name on circlular plot
+    pos.rt = 360 - ((start + gene_length / 2) / (16023)) * 360
+  )
+
+# Good automatic labels was difficult, so manually specify positions
+refflat_length_small_plothelp <- refflat_length %>%
+  filter(small_gene == 1) %>%
+  mutate(plot_pos = case_when(
+    Gene %in% c("TF", "TM", "TC", "TD", "ATP8", "TL2") ~ start + gene_length/2 + 60,
+    Gene %in% c("TI", "TA", "TH", "TT")  ~ start + gene_length/2 - 60,
+    Gene %in% c("TY")  ~ start + gene_length/2 + 120,
+    Gene %in% c("TW")  ~ start + gene_length/2 - 120,
+    TRUE ~ start + gene_length/2)
+  )
+
+dat_plot_solargene <- d_gene_clean %>% 
+  mutate(neglogp = -log10(P.value)) %>%
+  left_join(gene_sig_fdr %>% mutate(sig=1)) %>%
+  mutate(sig = coalesce(sig, 0)) %>%
+  dplyr::rename(Gene = SetID) %>%
+  mutate(Gene = gsub("MT-", "", Gene)) %>%
+  left_join(refflat_length) %>%
+  arrange(Gene, as.numeric(phecode)) %>%
+  group_by(Gene) %>%
+  mutate(
+    length_nrow_ratio = dplyr::n() / gene_length,
+    phe_pos = row_number() / length_nrow_ratio,
+    POS = phe_pos + start
+  ) %>% 
+  ungroup() %>%
+  mutate(
+    group = ifelse(is.na(group) | group == "", "biomarkers", group),
+    Ancestry = factor(Ancestry, levels  = c("EUR", "AFR", "AMR", "EAS")),
+    gene_lbl = ifelse(sig, Gene, NA),
+    lbl_genesubgroup = ifelse(sig, paste0("(", gene_lbl, ", ", Subgroup, ")"), NA),
+    description = coalesce(biomarker_key[trait], description),
+    description_shortened = gsub("[;,]* and ", "/", description),
+    phecode_title = paste0(phecode, "-", description_shortened),
+    lbl = ifelse(sig, coalesce(biomarker_key[trait], phecode_title), ""),
+    #Add the gene AND population label for all points.
+    lbl = ifelse(sig, paste0(lbl, "\n", lbl_genesubgroup), NA),
+    points_nonsig = ifelse(sig, NA, POS),
+    #NONsignificant points
+    points_sig = ifelse(sig, POS, NA) #, #significant points
+  )
+
+# Define gray and white colors for gene bands
+colours_gw <- colours
+colours_gw[1:length(colours_gw)] <- rep(c("gray50", "gray60", "gray70"), 100)[1:length(colours)]
+
+# Define colours for phecode group key
+colours_group <-
+  lapply(c("purple1", "aquamarine4", "darkorange3", "deeppink2"),
+         lighten_col) %>% unlist()
+
+names(colours_group) <-
+  c("circulatory system",
+    "endocrine/metabolic",
+    "digestive",
+    "biomarkers")
+
+#scales::show_col(colours_group)
+```
+
+Plot
+```{r}
+# ggrepel has some randomness so set seed
+set.seed(12345)
+
+c_radius <- 6.5
+
+fplot <- ggplot(dat_plot_solargene) +
+  ylim(0, max(dat_plot_solargene$neglogp) + c_radius + 1) +
+  coord_polar(direction = -1, clip = "off") +
+  # Add Concentric lines
+  geom_hline(
+    yintercept = c_radius + 1:10,
+    color = "gray",
+    linewidth = 0.1
+  ) +
+  # Gene bands
+  geom_rect(
+    data = refflat,
+    aes(
+      xmin = start,
+      xmax = end,
+      ymin = c_radius - 1.2,
+      ymax = c_radius - 0.2,
+      fill = gene
+    ),
+    inherit.aes = F,
+    show.legend = F
+  ) +
+  # Gene labels on the band (for larger genes)
+  geom_textpath(
+    data = refflat_length,
+    aes(
+      x = start + gene_length / 2,
+      y = c_radius - 0.7,
+      label = ifelse(small_gene, NA, Gene),
+      angle = ifelse(small_gene, 90, 0),
+      size = ifelse(small_gene, 1.5, 5)
+    ),
+    inherit.aes = F,
+    show.legend = F
+  ) +
+  # Plot non-significant points (by phecode group)
+  geom_point(aes(
+    x = points_nonsig,
+    y = neglogp + c_radius,
+    shape = Ancestry,
+    color = group
+  ),
+  size = 1) +
+  # Plot significant points - larger point size
+  geom_point(aes(
+    x = points_sig,
+    y = neglogp + c_radius,
+    shape = Ancestry,
+    color = group
+  ),
+  size = 3.5) +
+  # Label significant points
+  geom_text_repel(
+    aes(
+      x = POS,
+      y = neglogp + c_radius,
+      label = lbl
+    ),
+    show.legend = F,
+    max.overlaps = Inf,
+    max.time = 40,
+    color = "gray1",
+    size = 3,
+    box.padding = unit(1, "lines"),
+    nudge_x = -.2,
+    nudge_y = 0.2
+  ) +
+  # Label small genes that don't fit well in the bands
+  geom_text(
+    data = refflat_length_small_plothelp,
+    aes(
+      x = plot_pos,
+      y = c_radius + .25,
+      angle = 90 - ifelse(pos.rt >= 180, pos.rt - 180, pos.rt),
+      label = Gene
+    ),
+    inherit.aes = F,
+    size = 3,
+    show.legend = F
+  ) +
+  # Color scheme for points
+  scale_colour_manual(values = colours_group, "Phecode Type") +
+  # Color scheme for genes (grays)
+  scale_fill_manual(values = colours_gw, "", breaks = names(colours_gw)) +
+  # Plot details
+  guides(fill = "none", size = "none") +
+  xlab("") + ylab("") + 
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = c(0.53, 0.49),
+    legend.key.size = unit(0.4, 'cm'),
+    panel.grid = element_blank()
+  ) +
+  # Shape scheme for ancestries
+  scale_shape_manual(values = c(15, 16, 17, 9)) +
+  # Size for gene labels?
+  scale_size(range = c(2, 3.5)) # finicky
+
+# save to png
+ggsave(
+  paste0(image_dir, "combined_fdr_solarplot_genebased.png"),
+  plot = fplot,
+  w = 12,
+  h = 10,
+  dpi = 400,
+  bg = "white"
+)
+```
+
+# Supplementary Figure 8 - compare with gnomAD 
+
+### Pull the data from gnoMAD
+
+Only need to run this once. 
+```{r}
+# # 1. gnomAD API URL
+# url <- "https://gnomad.broadinstitute.org/api"
+# 
+# dataset <- "gnomad_r4"
+# 
+# # 2. get list of gnoMAD mitochondrial variants overlapping with MVP's
+# query_list <- paste0('
+# {
+#   region(chrom:"M", start:1, stop:20000, reference_genome: GRCh38) {
+#     mitochondrial_variants(dataset: ', dataset, ') {
+#       variant_id
+#     }
+#   }
+# }')
+# 
+# resp <- POST(url, body = list(query = query_list), encode = "json")
+# json <- content(resp, as = "text")
+# parsed <- fromJSON(json, flatten = TRUE)
+# 
+# variant_ids <- parsed$data$region$mitochondrial_variants$variant_id
+# current_variant_ids_df <- data.frame("gnomadID" = variant_ids) %>%
+#   separate_wider_delim(gnomadID, delim = "-",
+#                        names = c(NA, "POS", "REF_gnomad", "ALT_gnomad"),
+#                        cols_remove = FALSE) %>%
+#   mutate(POS = as.numeric(POS)) %>%
+#   # join by POS
+#   inner_join(all_afreqs %>% distinct(POS, ID, REF, ALT)) %>%
+#   # Ref and Alt must be the same 2 alleles, but they can be switched
+#   filter( (REF == REF_gnomad | REF == ALT_gnomad)  &
+#           (ALT == REF_gnomad | ALT == ALT_gnomad) )
+# nrow(current_variant_ids_df) # 217
+# 
+# # how many have ref/alt switched?
+# current_variant_ids_df %>%
+#   count(REF == REF_gnomad,
+#         ALT == ALT_gnomad) #3
+# 
+# # # View them
+# # current_variant_ids_df %>%
+# #   filter(REF != REF_gnomad) %>%
+# #   left_join(all_afreqs %>% filter(Subgroup == "All"))
+# # # For these, gnomad reports freqs for major alleles
+# 
+# # Variant ids to query
+# current_variant_ids <- current_variant_ids_df$gnomadID
+# 
+# # 3. loop through variants to get detailed info about ACs in each ancestry
+# all_data <- list()
+# 
+# # Pull the allele number (an), homoplasmic allele count (ac_hom), and heteroplasmic ac (ac_het)
+# # For each ancestry/population (id)
+# # Limit of 10 queries per 60 seconds; sleep 8s in between each to give a good buffer
+# # Query will take around 30 minutes
+# for(vid in current_variant_ids[33:217]){
+#   query_detail <- paste0('
+#   {
+#     mitochondrial_variant(dataset: ', dataset, ', variant_id: "', vid, '") {
+#       variant_id
+#       max_heteroplasmy
+#       rsid
+#       haplogroup_defining
+#       populations {
+#         id
+#         an
+#         ac_het
+#         ac_hom
+#       }
+#     }
+#   }')
+#   print(paste0("Querying SNP ", match(vid, current_variant_ids),
+#                " of ", length(current_variant_ids)))
+#   start_time <- Sys.time()
+#   resp2 <- POST(url, body = list(query = query_detail), encode = "json")
+#   json2 <- content(resp2, as = "text")
+#   parsed2 <- fromJSON(json2, flatten = TRUE)
+#   all_data[[vid]] <- parsed2$data$mitochondrial_variant
+#   elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+#   wait <- 10 - elapsed
+#   if (wait > 0){
+#     Sys.sleep(wait)
+#   }
+# }
+# 
+# # 4. flatten to CSV
+# records <- lapply(all_data, function(v){
+#   base <- tibble(
+#     variant_id = v$variant_id,
+#     max_heteroplasmy = v$max_heteroplasmy,
+#     rsid = v$rsid,
+#     haplogroup_defining = v$haplogroup_defining
+#   )
+# 
+#   pops <- as_tibble(v$populations)
+#   if(nrow(pops) == 0){
+#     base
+#   } else {
+#     tidyr::crossing(base, pops)
+#   }
+# })
+# 
+# # Calculate allele frequencies, filter to populations of interest
+# # Population mappings: https://www.clinpgx.org/page/populationMappings
+# # EUR -> NFE (Non-Finnish Europeans) AND FIN (Finnish)?
+# # For simplicity, we'll just use NFE.
+# # We also
+# gnomad_afs <- bind_rows(records) %>%
+#   mutate(af_het = ac_het/an,
+#          af_hom = ac_hom/an,
+#          af_total = (ac_het + ac_hom)/an) %>%
+#   # Keep all just in case we want to use FIN
+#   rename(gnomadID = variant_id) %>%
+#   left_join(current_variant_ids_df) %>%
+#   arrange(POS)
+# 
+# # 5. Write out query results
+# ## previous version was v 3.1.2
+# #fwrite(gnomad_afs, paste0(output_dir, "gnomad_mitochondrial_variants_details_v4.1.txt"))
+```
+
+```{r}
+# # check that they were all retrieved
+# unique(current_variant_ids) %>% length()
+# gnomad_afs %>% distinct(gnomadID) %>% nrow()
+# missing_gnomad_ids <- setdiff(current_variant_ids, unique(gnomad_afs$gnomadID))
+# missing_gnomad_ids
+```
+
+
+### Reformat the gnoMAD data
+```{r}
+# Subtract AF from 1 if need to switch REF/ALT.
+gnomad_afs_long <-
+  fread(paste0(
+    output_dir,
+    "gnomad_mitochondrial_variants_details_v4.1.txt"
+  )) %>%
+  mutate(
+    af_hom = ifelse(REF_gnomad == ALT, 1 - af_hom, af_hom),
+    af_het = ifelse(REF_gnomad == ALT, 1 - af_het, af_het),
+    af_total = ifelse(REF_gnomad == ALT, 1 - af_total, af_total),
+    Ancestry = toupper(id)
+  ) %>%
+  filter(Ancestry %in% c("NFE", "AFR", "AMR", "EAS")) %>%
+  mutate(Ancestry = ifelse(Ancestry == "NFE", "EUR", Ancestry)) %>%
+  select(-contains(c("REF", "ALT")))
+
+# Get wide format
+gnomad_afs_wide <- gnomad_afs_long  %>%
+  select(POS, ID, rsid, gnomadID, af_het, af_hom, af_total, Ancestry) %>%
+  pivot_wider(names_from = Ancestry,
+              values_from = c(af_hom, af_het, af_total)) %>%
+  select(POS, ID, rsid, gnomadID, contains(c("EUR", "AFR", "AMR", "EAS")))
+```
+
+Also format the MVP allele frequencies 
+```{r}
+# MVP Use version contains all the filtered out snps
+mvp_afs_long <- all_afreqs %>%
+  filter(Subgroup == "All") 
+mvp_afs_wide <- mvp_afs_long %>%
+  distinct(Ancestry, ID, POS, REF, ALT, ALT_FREQ) %>%
+  pivot_wider(names_from = Ancestry, values_from = "ALT_FREQ") %>%
+  select(ID, BP = POS, REF, ALT, contains(c("EUR", "AFR", "AMR", "EAS"))) 
+```
+
+Combine and compare gnoMAD and MVP frequencies
+```{r, warning=FALSE}
+gnomAD_sum_wide <- left_join(mvp_afs_wide, gnomad_afs_wide)
+
+# For plots
+gnomAD_sum_long <- full_join(mvp_afs_long, gnomad_afs_long)
+
+# Format and compare on log scale
+dat_compare <- gnomAD_sum_long %>% 
+  select(ID, gnomadID, POS, id, Ancestry, ALT_FREQ, 
+         af_hom, `Allele Count (gnomAD)` = ac_hom) %>%
+  # since we will compare them on log scale, they must both have non-zero frequency
+  filter(af_hom > 0 & ALT_FREQ > 0 & ALT_FREQ < 1) %>% 
+  # Use minor allele frequency in MVP
+  mutate(
+    MAF_mvp = pmin(ALT_FREQ, 1 - ALT_FREQ),
+    # Make gnomad consistent - could be above 50% rarely
+    AF_gnomad = case_when(ALT_FREQ == MAF_mvp ~ af_hom,
+                          TRUE ~ 1 - af_hom),
+    # -log10 versions
+    MVP = -log10(MAF_mvp),
+    gnomAD = -log10(AF_gnomad),
+  ) %>% 
+  filter(!is.na(gnomAD)) %>% 
+  mutate(BP = paste0("MT", POS))
+```
+
+### Generate plots
+```{r, warning=FALSE}
+xpos <- 2.5
+ypos <- c(1, .7)
+
+# function to add the r2 and slope to plots
+add_anno <- function(x) {
+  x + annotate(geom = "text", x = xpos, y = ypos[1], 
+           #label = bquote(r^2 == .(rr)),
+           label = paste0("r^2 == ", rr), parse = TRUE,
+           color="red", size = 5) + 
+      annotate(geom = "text", x = xpos, y = ypos[2],
+           label = paste0("Slope = ", slope),
+           color= "red", size = 5) 
+}
+
+# EUR
+dat <- dat_compare %>% filter(Ancestry == "EUR")
+rr = signif(cor(dat$gnomAD, dat$MVP, use = "pairwise.complete.obs"), 3)
+tm.lm = summary(lm(MVP ~ -1 + gnomAD, data = dat))
+slope = signif(tm.lm$coefficients[1,1], 3)
+
+ggp <- ggplot(dat, aes(x = gnomAD, y = MVP)) +
+  stat_smooth(
+    method = "lm",
+    formula = y ~ x,
+    geom = "smooth",
+    se = FALSE
+  ) +
+  geom_point(size = 2) +
+  xlab(expression(-log[10](paste("gnomAD MAF")))) +
+  ylab(expression(-log[10](paste("MVP MAF")))) +
+  theme_classic()
+ggp_EUR <- add_anno(ggp)
+
+
+# AFR
+dat <- dat_compare %>% filter(Ancestry == "AFR")
+rr = signif(cor(dat$gnomAD, dat$MVP, use = "pairwise.complete.obs"), 3)
+tm.lm = summary(lm(MVP ~ -1 + gnomAD, data = dat))
+slope = formatC(tm.lm$coefficients[1,1], format = "f", 2)
+ggp_AFR <- ggp %+% (dat) %>% add_anno(.)
+
+
+# AMR
+dat <- dat_compare %>% filter(Ancestry == "AMR")
+rr = signif(cor(dat$gnomAD, dat$MVP, use = "pairwise.complete.obs"), 3)
+tm.lm = summary(lm(MVP ~ -1 + gnomAD, data = dat))
+slope = signif(tm.lm$coefficients[1,1], 3)
+ggp_AMR <- ggp %+% (dat) %>% add_anno(.)
+
+
+# EAS
+dat <- dat_compare %>% filter(Ancestry == "EAS")
+rr = signif(cor(dat$gnomAD, dat$MVP, use = "pairwise.complete.obs"), 3)
+tm.lm = summary(lm(MVP ~ -1 + gnomAD, data = dat))
+slope = signif(tm.lm$coefficients[1,1], 3)
+ggp_EAS <- ggp %+% (dat) %>% add_anno(.)
+ 
+
+# display
+ggp_EUR
+ggp_AFR
+ggp_AMR
+ggp_EAS
+```
+
+Save the plots
+```{r}
+ggsave(paste0(image_dir, "cor_MAF_gnomAD_EUR.png"),
+       plot = ggp_EUR,
+       width = 20, height = 10, units = "cm")
+ggsave(paste0(image_dir, "cor_MAF_gnomAD_AFR.png"),
+       plot = ggp_AFR,
+       width = 20, height = 10, units = "cm")
+ggsave(paste0(image_dir, "cor_MAF_gnomAD_AMR.png"),
+       plot = ggp_AMR,
+       width = 20, height = 10, units = "cm")
+ggsave(paste0(image_dir, "cor_MAF_gnomAD_EAS.png"),
+       plot = ggp_EAS,
+       width = 20, height = 10, units = "cm")
+```
+
+
+# ST1 - Binary trait summaries
+```{r}
+# Use summaries from Gene-based tests, which don't vary based on SNP missing genotypes
+ST1 <-  d_gene_all %>%
+  distinct(phecode, description, trait, Ancestry, Subgroup, 
+           n_cases, observations, prop_cases) %>%
+  filter(Subgroup == "All") %>%
+  group_by(trait) %>%
+  filter(any(n_cases >= 500)) %>%
+  ungroup() %>%
+  mutate(`# Cases / N (%)` = paste(
+    formatC(n_cases, format = "d", big.mark = ","),
+    "/",
+    formatC(observations,
+            format = "d", big.mark = ","),
+    paste0("(", round(prop_cases * 100, 1), "%)"),
+    sep = " "
+  )) %>% 
+  dplyr::select(-c(n_cases, prop_cases, observations, Subgroup)) %>%
+  pivot_wider(names_from = "Ancestry", 
+              values_from = `# Cases / N (%)`, 
+              names_prefix = "# Cases / N (%) ") %>%
+  left_join(pheinfo) %>%
+  dplyr::select(trait = phecode, description, group, 
+                contains(c("EUR", "AFR", "AMR", "EAS"))) %>%
+  mutate(
+    description = ifelse(trait == "bmi.obese", "Obesity (BMI >= 30)", description),
+    group = ifelse(trait == "bmi.obese", "biomarkers", group)
+  ) %>% 
+  mutate(across(contains(c(
+    "EUR", "AFR", "AMR", "EAS"
+  )),
+  function(x) {
+    coalesce(x, "<500")
+  }))
+```
+
+# ST3 - MTSNV Annotation
+```{r}
+anno <-
+  readxl::read_xlsx(paste0(analysis_dir, "../hmtvar/Suppl.xlsx"), skip = 1) %>%
+  left_join(readxl::read_xlsx(paste0(
+    analysis_dir, "../summary/aa_changes.xlsx"
+  ))) %>%
+  select(-c(EUR, AFR, HIS, ASN, `Variant type`, `aa change`))
+
+ST3 <- anno %>% 
+  left_join(mvp_afs_wide) %>%
+  left_join(gnomad_afs_wide) %>%
+  select(
+    #basic info
+    ID,	BP,	REF, ALT,	
+    #Alternative Frequencies
+    EUR, AFR, AMR, EAS,
+    #more info
+    dbSNP,	Locus,	Group, `Variant type` = variant_type, 
+    `aa change` = aa_change, `Codon position`,
+    #Pathogenicity annotations				
+    Pathogenicity,	`MITOMAP disease`,	`ClinVar disease`,	OMIM,
+    #In silico prediction AA substitution consequence 
+    HmtVar,	MutPred,	PANTHER,	`PhD-SNP`,	`Polyphen2 (HumDiv)`,	
+    `Polyphen2 (HumVar)`,	`SNPs&GO`,
+    #Conservation scores		
+    `PhastCons 100way`,	`PhyloP 100way`,
+    #Heteroplasmic status	
+    `1000 Genomes`,	MITOMAP,	`MITOMAP (somatic)`,
+    # Homoplasmic Allele frequencies from gnomad
+    af_hom_EUR, af_hom_AFR, af_hom_AMR, af_hom_EAS, 
+    # Heterolasmic Allele frequencies from gnomad
+    af_het_EUR,  af_het_AFR, af_het_AMR, af_het_EAS
+    )
+```
+
+# ST4 - Genomic Inflation
+```{r}
+ST4 <- d_snp_clean %>%
+  select(phecode, description, trait, group, Ancestry, Subgroup, P) %>%
+  mutate(chisq = qchisq(1 - P, df = 1)) %>%
+  group_by(Ancestry, Subgroup, phecode, trait, description, group) %>%
+  summarize(GIF = median(chisq) / qchisq(0.5, df = 1)) %>%
+  pivot_wider(names_from = "Ancestry", values_from = "GIF") %>%
+  mutate(
+    trait = coalesce(biomarker_key[trait], phecode),
+    group = ifelse(is.na(group) | group == "", "biomarkers", group),
+    description = ifelse(group == "biomarkers", trait, description)
+  ) %>%
+  ungroup() %>%
+  dplyr::select(Subgroup, trait, description, group,
+                contains(c("EUR", "AFR", "AMR", "EAS"))) %>%
+  arrange(Subgroup, trait)
+```
+
+# ST9b - Hypothyroidism sensitivity analysis
+Supplementary table 9b
+```{r}
+hypo.sens <-
+  fread(paste0(data_dir2, "hypothyroidism_excl_multi.result.txt"))
+hypo.tert <-
+  fread(paste0(data_dir2, "hypothyroidism_excl_multi.age_tertiles.txt"))
+
+SNPinfo <- all_afreqs %>% 
+  distinct(ID, POS, REF, ALT)
+
+ST9b <- hypo.sens %>% 
+  mutate(tertile = "all") %>%
+  bind_rows(hypo.tert %>% 
+              mutate(tertile = as.character(tertile))) %>%
+  dplyr::rename(ID = SNP, SE = Std..Error, P = Pr...z..) %>%
+  filter(ID != "miniPRS") %>%
+  mutate(ID = gsub("_", "-", ID)) %>%
+  left_join(SNPinfo) %>%
+  inner_join(d_sig_fdr_eur %>% 
+               filter(phecode == "244.4") %>% 
+               distinct(POS)) %>%
+  mutate(
+    `BP/REF/ALT` = paste(POS, REF, ALT, sep = "/"),
+    LCI = signif(exp(Estimate - 1.96 * SE), 3),
+    UCI = signif(exp(Estimate + 1.96 * SE), 3),
+    `OR (95% CI)` = paste0(signif(exp(Estimate), 3), " (", LCI, "-", UCI, ")"),
+    `# Cases/N (%)` = paste0(n_cases, "/", observations, 
+                             " (", round(100 * prop_cases, 1), "%)"),
+    P = signif(P, 3)
+  ) %>% 
+  arrange(POS, tertile) %>%
+  select(AgeGroup = tertile, `# Cases/N (%)`, ID, `BP/REF/ALT`, `OR (95% CI)`, P)
+
+#ST9b %>% View(.)
+```
+
+
+
+# ST10 - sex-stratified hypothyroidism
+```{r}
+ST10 <- d_sig_fdr_eur %>%
+  filter(Ancestry == "EUR" & phecode == "244.4") %>%
+  distinct(POS, Ancestry, `Description, Phecode`) %>%
+  inner_join(d_snp_fmt) %>%
+  filter(Subgroup %in% c("Females", "Males")) %>%
+  arrange(POS, Subgroup) %>%
+  select(Ancestry, dbSNP, `BP/REF/ALT`, Locus, Sex = Subgroup, `Alt AF`,
+         `# Cases / N (%)`, `OR (95% CI), P-value`, `FDR Adjusted P-value`)
+```
+
+# ST7 - SNPs in genes
+
+```{r}
+ST7 <- snps_in_SetIDs %>%
+  mutate(
+    Ancestry = factor(Ancestry, levels = c("EUR", "AFR", "AMR", "EAS")),
+    mtsnv = paste0(REF, POS, ALT),
+    trait = biomarker_key[trait]
+  ) %>%
+  arrange(Ancestry, SetID, Subgroup, trait, POS) %>%
+  group_by(Ancestry, SetID, Subgroup, trait) %>%
+  summarize(`mtSNVs (REF POS ALT)` = paste0(mtsnv, collapse = ", ")) %>%
+  arrange(desc(trait == "PheCodes"), Ancestry, SetID, Subgroup)
+```
+
+
+# ST8 - Conditional analysis
+```{r}
+ST8 <-
+  fread(paste0(data_dir2, "conditional_analysis_mtGeneSNP.txt")) %>%
+  mutate(
+    Subgroup = case_when(
+      POP == "t2d" ~ "T2D",
+      POP == "nondiab" ~ "Non-DM",
+      SEX != "allsex" ~ str_to_title(SEX),
+      TRUE ~ "All"
+    ),
+    phecode = gsub("_", ".", gsub("phe_", "", trait)),
+    `P-value (adjusted for SNV genotype)` = signif(P.value, 3)
+  ) %>% 
+  select(SetID, Ancestry = RACE, phecode, Subgroup, 
+         `P-value (adjusted for SNV genotype)`) %>%
+  inner_join(cond_anly %>% dplyr::rename(SetID = Locus)) %>%
+  mutate(
+    `Gene P-value` = signif(P.value, 3),
+    SNV = paste0("MT", POS)
+  ) %>% 
+  select(Ancestry, Subgroup, SNV, SetID, Phecode = phecode, 
+         `Phecode Description` = description, 
+         `Gene P-value`, `P-value (adjusted for SNV genotype)`) %>%
+  arrange(desc(Ancestry), desc(Subgroup))
+
+ST8
+```
+
+
+# ST5 - KESER relationships
+Use https://celehs.connect.hms.harvard.edu/kesernetwork/
+Enter the phecodes (non-decimal ones are not available, e.g. 244, 253)
+Download results as keser2025.csv
+
+```{r}
+d_sig_fdr %>% 
+  distinct(phecode) %>% 
+  arrange(phecode) %>%
+  filter(grepl("\\.", phecode))
+```
+
+Report the top 5 unique results for each phecode
+```{r}
+KESER <- fread(paste0(egress_dir, "KESER.csv")) 
+
+ST5 <- KESER %>%
+  mutate(Phecode = gsub("PheCode:", "", from)) %>%
+  arrange(Phecode, desc(corvalue)) %>%
+  # filter out repetitive / non-unique labs/meds (insulin and testosterone)
+  filter(!(to.term %in% c("insulin detemir", "insulin glulisine,\n human",
+                          "insulin, regular,\n human"))) %>%
+  filter(!(from == "PheCode:253.4" & to.term == "other lab:testo-t")) %>%
+  filter(!(from == "PheCode:259.3" & to.term %in% 
+             c("other lab:testost", "other lab:testos", "other lab:tsto",
+               "other lab:testos.", "testosterone"))) %>%
+  group_by(Phecode) %>%
+  slice_head(n=5) %>%
+  select(Phecode, everything(), `Cosine Similarity` = corvalue) %>%
+  mutate(Phecode = ifelse(row_number() == 1, Phecode, ""))
+```
+
+
+# Export the main tables to word doc
+```{r}
+print(tablesdoc, target = paste0(output_dir, "mt_main_tables.docx"))
+```
+
+# Export the Supplementary tables to excel
+Named according to the order they appear in the manuscript
+```{r}
+SuppTables <- list(
+  "ST1" = ST1,
+  "ST3" = ST3,
+  "ST4" = ST4,
+  "ST5" = ST5,
+  "ST7" = ST7,
+  "ST8" = ST8,
+  "ST9b" = ST9b,
+  "ST10" = ST10
+)
+
+# header style
+hs1 <- createStyle(textDecoration = "bold", border = "TopBottom")
+
+write.xlsx(
+  SuppTables,
+  paste0(output_dir, "SuppTablesHelp.xlsx"),
+  overwrite = T,
+  startRow = 2,
+  headerStyle = hs1,
+  keepNA = T,
+  na.string = "-"
+)
+```
+
+
+# Supplementary Methods - Power Simluations
+
+GWAS power based on tutorial: 
+https://cran.r-project.org/web/packages/genpwr/vignettes/vignette.html 
+
+
+Define parameters
+```{r}
+# sample sizes
+ss <- c(435000, 112000, 54000, 10000)
+
+# with minimum of 500 cases, what are the minimum case proportions
+500/ss
+
+# for EAS, may want to start at 4 or 5%
+
+# allele frequencies
+maf_v = unique(c(
+  seq(0.001, 0.005, 0.0002),
+  seq(0.005, 0.01, 0.0005),
+  seq(0.01, 0.025, 0.001),
+  seq(0.025, 0.15, 0.01),
+  seq(0.15, 0.45, 0.05)
+))
+
+# Colors and labels
+crs <- c( 0.002, 0.01, 0.05, 0.1, 0.35)
+colorvalues5 = c("purple", "red", "goldenrod",  "green", "blue")
+labels5 = c('0.2%', '1%', '5%', '10%', '35%')
+
+# Themes and scales
+mytheme <- theme_bw() +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  )
+
+mycolorscale <- scale_color_manual(name = "% Cases",
+                                   values = colorvalues5,
+                                   labels = labels5)
+```
+
+EUR
+```{r}
+orEUR <- genpwr.calc(
+  calc = "es",
+  model = "logistic",
+  ge.interaction = NULL,
+  N = ss[1],
+  Case.Rate = crs,
+  k = NULL,
+  MAF = maf_v,
+  Power = 0.8,
+  Alpha = 1e-5,
+  True.Model = c("Additive"),
+  Test.Model = c("Additive")
+) %>%
+  mutate(Case_Rate_fct = factor(Case.Rate, levels = crs))
+
+pEUR <- ggplot(data = orEUR ,
+               aes(x = MAF, y = `OR_at_Alpha_1e-05`, color = Case_Rate_fct)) +
+  geom_point(size = 3, shape = 23) +
+  mytheme + mycolorscale +
+  ylab("OR at alpha = 1e-5") +
+  ggtitle("EUR, Sample size = 435K, Power = 80%") +
+  scale_x_log10()
+```
+
+AFR
+```{r}
+orAFR <- genpwr.calc(
+  calc = "es",
+  model = "logistic",
+  ge.interaction = NULL,
+  N = ss[2],
+  Case.Rate = crs,
+  k = NULL,
+  MAF = maf_v,
+  Power = 0.8,
+  Alpha = 1e-5,
+  True.Model = c("Additive"),
+  Test.Model = c("Additive")
+) %>%
+  mutate(Case_Rate_fct = factor(Case.Rate, levels = crs))
+
+pAFR <- pEUR %+% (orAFR) +
+  ylab("OR at alpha = 1e-5") +
+  ggtitle("AFR, Sample size = 112K, Power = 80%")
+```
+
+AMR
+```{r}
+orAMR <- genpwr.calc(
+  calc = "es",
+  model = "logistic",
+  ge.interaction = NULL,
+  N = ss[3],
+  Case.Rate = crs,
+  k = NULL,
+  MAF = maf_v,
+  Power = 0.8,
+  Alpha = 1e-5,
+  True.Model = c("Additive"),
+  Test.Model = c("Additive")
+) %>%
+  mutate(Case_Rate_fct = factor(Case.Rate, levels = crs))
+
+pAMR <- pEUR %+% (orAMR) +
+  ylab("OR at alpha = 1e-5") +
+  ggtitle("AMR, Sample size = 54K, Power = 80%")
+```
+
+EAS
+```{r}
+orEAS <- genpwr.calc(
+  calc = "es",
+  model = "logistic",
+  ge.interaction = NULL,
+  N = ss[4],
+  Case.Rate = crs[crs > 0.01],
+  #issues with the rarest 2
+  k = NULL,
+  MAF = maf_v,
+  Power = 0.8,
+  Alpha = 1e-5,
+  True.Model = c("Additive"),
+  Test.Model = c("Additive")
+) %>%
+  mutate(Case_Rate_fct = factor(Case.Rate, levels = crs[crs > 0.01]))
+
+pEAS <- ggplot(data = orEAS ,
+               aes(x = MAF, y = `OR_at_Alpha_1e-05`, color = Case_Rate_fct)) +
+  geom_point(size = 3, shape = 23) +
+  mytheme +
+  scale_color_manual(
+    name = "% Cases",
+    values = c("goldenrod",  "green", "blue"),
+    labels = c('5%', '10%', '35%')
+  ) +
+  ylab("OR at alpha = 1e-5") +
+  ggtitle("EAS, Sample size = 10K, Power = 80%") +
+  scale_x_log10()
+```
+
+Display plots
+```{r}
+pEUR
+pAFR
+pAMR
+pEAS
+```
+
+Combine plots and save
+```{r}
+combinedplot <- cowplot::plot_grid(pEUR, pAFR, pAMR, pEAS,
+                                   #labels = c('EUR', 'AFR', 'AMR', 'EAS'),
+                                   label_size = 12)
+combinedplot
+
+ggsave(
+  paste0(image_dir,
+         "powersim_combined_ancestries.png"),
+  plot = combinedplot,
+  dpi = 300,
+  height = 9,
+  width = 14
+)
+```
+
+```{r}
+orEUR %>% filter(MAF == 0.001) %>% 
+  select(MAF, Case.Rate, `OR_at_Alpha_1e-05`)
+
+orEUR %>%
+  filter(Case.Rate == 0.01 & MAF == .01) %>% 
+  select(MAF, Case.Rate, `OR_at_Alpha_1e-05`)
+
+orEUR %>%
+  filter(Case.Rate == 0.01 & MAF == .001) %>% 
+  select(MAF, Case.Rate, `OR_at_Alpha_1e-05`)
+```
+
+
+
+Take a look at theoretical power for our significant (main, snp-based) results
+
+EUR
+```{r}
+point_data_EUR <- d_sig_fdr %>% 
+  filter(Subgroup == "All" & Ancestry == "EUR") %>%
+  left_join(ORs) %>%
+  distinct(MAF = `Alt AF`, lbl = `# Cases / N (%)`, OR)
+
+eur_result_power <- data.frame()
+for (i in 1:nrow(point_data_EUR)) {
+  r.i <- genpwr.calc(
+    calc = "power", 
+    model = "logistic", 
+    ge.interaction = NULL,
+    N = ss[1], 
+    Case.Rate = .01*as.numeric(gsub(".*\\(|%\\)", "", point_data_EUR[i, 2])), 
+    MAF = 0.01*as.numeric(gsub("%", "", point_data_EUR[i, 1])), 
+    OR = point_data_EUR[i, 3],
+    Alpha = 1e-5,
+    True.Model = c("Additive"), 
+    Test.Model = c("Additive")
+    )
+  eur_result_power <- bind_rows(eur_result_power, r.i)
+}
+
+eur_result_power %>% 
+  select(MAF, OR, Case.Rate, `Power_at_Alpha_1e-05`) %>%
+  arrange(desc(`Power_at_Alpha_1e-05`))
+```
+
+AFR 
+```{r}
+point_data_AFR <- d_sig_fdr %>% 
+  filter(Subgroup == "All" & Ancestry == "AFR") %>%
+  left_join(ORs) %>%
+  distinct(MAF = `Alt AF`, lbl = `# Cases / N (%)`, OR)
+
+AFR_result_power <- data.frame()
+for (i in 1:nrow(point_data_AFR)) {
+  r.i <- genpwr.calc(
+    calc = "power", 
+    model = "logistic", 
+    ge.interaction = NULL,
+    N = ss[2], 
+    Case.Rate = .01*as.numeric(gsub(".*\\(|%\\)", "", point_data_AFR[i, 2])), 
+    MAF = 0.01*as.numeric(gsub("%", "", point_data_AFR[i, 1])), 
+    OR = point_data_AFR[i, 3],
+    Alpha = 1e-5,
+    True.Model = c("Additive"), 
+    Test.Model = c("Additive")
+    )
+  AFR_result_power <- bind_rows(AFR_result_power, r.i)
+}
+
+AFR_result_power %>% 
+  select(MAF, OR, Case.Rate, `Power_at_Alpha_1e-05`) %>%
+  arrange(desc(`Power_at_Alpha_1e-05`))
+```
+
+
+# Extended PheWAS 
+###  Supplementary Figures 9-11: Manhattan plots
+```{r, warning=FALSE, message=FALSE}
+
+extendedPheWAS_clean <- extendedPheWAS %>%
+  filter(n_cases >= 500) %>%
+  mutate(
+    prop_cases = n_cases / OBS_CT,
+    Trait = gsub("_", ".", gsub("phe_", "", trait)),
+    `BP/REF/ALT` = str_c(POS, "/", OMITTED, "/", A1, sep = ""),
+    `# Cases / N (%)` = ifelse(
+      n_cases < 500,
+      " < 500",
+      paste(
+        formatC(n_cases, format = "d", big.mark = ","),
+        "/",
+        formatC(OBS_CT, format = "d", big.mark = ","),
+        paste0("(", round(prop_cases * 100, 1), "%)"),
+        sep = " "
+      )
+    ),
+    LCI = signif(L95, 3),
+    UCI = signif(U95, 3),
+    `OR (95% CI)` = paste0(signif(OR, 3), " (", signif(LCI, 3), 
+                           "-", signif(UCI, 3), ")"
+    )
+  ) %>%
+  select(-c(POS, OMITTED, A1, REF, ALT, n_cases, OBS_CT, LCI, UCI, L95, U95, 
+            OR, `LOG(OR)_SE`, SEX, POP, prop_cases, ERRCODE, trait, Z_STAT)) %>%
+  dplyr::rename(`Alt AF` = A1_FREQ) %>%
+  #reorder
+  #select(any_of(names(d_snp_out)), everything()) %>%
+  filter(!(Trait %in% ST1$trait)) %>%
+  inner_join(pheinfo, by = c("Trait" = "phecode")) %>%
+  select(-c(groupnum, color))
+
+
+unique_plots <- extendedPheWAS_clean %>%
+  distinct(`BP/REF/ALT`, ID, Ancestry, Subgroup)
+nrow(unique_plots)
+
+unique_plots %>% 
+  mutate(mtSNV = paste0("MT", `BP/REF/ALT`)) %>% 
+  select(mtSNV, Ancestry, Subgroup) %>%
+  mutate(Ancestry = factor(Ancestry, levels = c("EUR", "AFR", "AMR"))) %>%
+  arrange(Subgroup, Ancestry) %>%
+  write_csv(paste0(output_dir, "supp_extPheSNV.csv"))
+
+dir.create(paste0(image_dir, "extManhattan"), showWarnings = FALSE)
+
+d_extPhe_all <- data.frame()
+for (i in 1:nrow(unique_plots)) {
+  suppressMessages(
+    d.i <- unique_plots[i,] %>%
+      left_join(extendedPheWAS) %>%
+      dplyr::rename( #phenotype = trait,
+                    p = P) %>%
+      filter(n_cases >= 500) %>%
+      mutate(phenotype = gsub("_", ".", gsub("phe_", "", trait))) %>% 
+      filter(!(phenotype %in% c(ST1$trait))) %>%
+      inner_join(pheinfo, by = c("phenotype" = "phecode")) %>%
+      mutate(p_FDR = p.adjust(p, method = "fdr"))
+  )
+  suppressWarnings( fdr_threshold_p <- max(d.i$p[d.i$p_FDR < 0.05]))
+  if (is.infinite(fdr_threshold_p)) {
+    fdr_threshold_p <- NA
+  } else {
+    print(paste("FDR threshold for", 
+                 unique_plots[i,]$Ancestry,
+                 unique_plots[i,]$Subgroup, 
+                 unique_plots[i,]$`BP/REF/ALT`, 
+                 "is:", signif(fdr_threshold_p, 2)))
+    p <- phewasManhattan(d = d.i %>% data.frame(),
+                         significant.line = fdr_threshold_p,
+                         suggestive.line = NA,
+                         annotate.phenotype.description = pheinfo %>%
+                           dplyr::rename(phenotype = phecode),
+                         annotate.level = fdr_threshold_p,
+                         OR.direction = TRUE,
+                         y.axis.interval = 1,
+                         title = paste(
+                           unique(d.i$Ancestry),
+                           unique(d.i$Subgroup), "-",
+                           unique(d.i$`BP/REF/ALT`))
+                         )  +
+                         #title = "") +
+      theme(    # top, right, bottom, left (in points)
+        plot.margin = margin(t = 10, r = 40, b = 10, l = 10))
+
+    ggsave( paste0(image_dir, "extManhattan/",
+                   unique(d.i$Ancestry) , "_",
+                   unique(d.i$Subgroup) , "_",
+                   unique(d.i$POS) , ".png"
+                   ),
+            plot = p,
+            height = 7, width = 11,dpi = 400)
+  }
+  # Need to export to source data for final submission to NComms
+    d_extPhe_all <- bind_rows(d_extPhe_all,
+                              d.i %>% data.frame())
+}
+```
+
+# Source Data file needed for final submission Nature Comms
+Source data for figures and tables
+
+```{r}
+d_extPhe_less <- d_extPhe_all %>%
+  select(ID:A1, A1_FREQ:OR, SE = LOG.OR._SE, n_cases, phenotype, P = p,
+         P_FDR = p_FDR, description, group)
+  
+SourceData <- list(
+  "Figure 1a" = solarplot_afreq$data %>%
+    select(-c(OMITTED, ALT_FREQ, MAF)),
+  "Figure 1b" = Fig1Helper %>%
+    select(-grps) %>% distinct(),
+  "Figure 2" = intx_sex_broad %>% select(-c(OR:UCI, POS, phecode)) %>%
+    dplyr::rename(`Interaction P-value` = intx_sex_pval),
+  "Figure 3" = intx_t2d_broad %>% select(-c(OR:UCI, POS, phecode)) %>%
+    dplyr::rename(`Interaction P-value` = intx_t2d_pval),
+  "Figure S1" = flowchart_data %>% select(`Box number` = stepno, step, n),
+  "Figure S8" = dat_compare %>%
+    select(
+      ID,
+      gnomadID,
+      Ancestry_MVP = Ancestry,
+      Ancestry_gnomad = id,
+      MAF_MVP = MAF_mvp,
+      MAF_gnomad = AF_gnomad
+    ),
+  # Not allowed to share these except via dbGaP
+  # "Figure S9" = dat_plot_solargene %>%
+  #   select(-c(trait, small_gene:points_sig)),
+  "Figure S9" = d_extPhe_less %>% filter(Ancestry == "EUR"),
+  "Figure S10" = d_extPhe_less %>% filter(Ancestry == "AFR"),
+  "Figure S11" = d_extPhe_less %>% filter(Ancestry == "AMR")
+)
+
+SourceDataFile <- paste0(output_dir, "SourceData_NatureComms.xlsx")
+
+write.xlsx(
+  SourceData,
+  SourceDataFile,
+  overwrite = T,
+  headerStyle = hs1
+)
+
+wb <- loadWorkbook(SourceDataFile)
+
+# Add new worksheets
+addWorksheet(wb, "Table 1")
+addWorksheet(wb, "Table 2")
+addWorksheet(wb, "Table 3")
+addWorksheet(wb, "Table 4")
+
+# Write data to the new sheets
+writeData(wb, sheet = "Table 1", x = table1a, headerStyle = hs1)
+writeData(wb, sheet = "Table 1", x = table1b, headerStyle = hs1, startRow = 14)
+writeData(wb, sheet = "Table 1", x = table1c, headerStyle = hs1, startRow = 26)
+
+writeData(wb, sheet = "Table 2", x = snp_table2, headerStyle = hs1)
+writeData(wb, sheet = "Table 3", x = Table3, headerStyle = hs1)
+writeData(wb, sheet = "Table 4", x = table4 %>% select(-grp1), headerStyle = hs1)
+
+# Save the workbook (overwrite existing file)
+saveWorkbook(wb, SourceDataFile, overwrite = TRUE)
+```
+
+
+# Output images to a word doc
+```{r}
+body_add_img_auto <- function(doc, img_path, max_width = 9.5, max_height = 7.25) {
+  # Read image dimensions
+  img_info <- image_info(image_read(img_path))
+  
+  # Convert to inches (Word assumes 96 dpi)
+  dpi <- 96
+  w_in <- img_info$width / dpi
+  h_in <- img_info$height / dpi
+  
+  # Scale down if wider than max_width
+  scaleW <- min(max_width / w_in, 1)
+  scaleH <- min(max_height / h_in, 1)
+  scale <- min(scaleW, scaleH)
+  
+  # Add to document
+  doc %>%
+    body_add_img(
+      src = img_path,
+      width = w_in * scale,
+      height = h_in * scale
+    )
+}
+
+img_doc <- read_docx() %>%
+  #body_add_par("Table of Contents", style = "heading 1") %>%
+  #body_add_break() %>%
+  body_add_par("Main", style = "heading 1") %>%
+  body_add_break() %>%
+  body_add_img_auto(paste0(egress_dir, "SchemaResultsV2025.png")) %>%
+  body_add_break() %>%
+  body_add_img_auto(paste0(image_dir, "Forestplot_by_sex.png")) %>%
+  body_add_break() %>%
+  body_add_img_auto(paste0(image_dir, "Forestplot_by_t2d.png")) %>%
+  body_add_break() %>%
+  body_end_section_landscape() %>%
+  body_add_img_auto(paste0(image_dir, "solarplot_afreqs_GIA.png")) %>%
+  body_add_break() %>%
+  body_add_par("Supplementary", style = "heading 1") %>%
+  body_add_img_auto(paste0(image_dir, "flowchart.png")) %>%
+  body_add_break() %>%
+  body_end_section_portrait() %>%
+  body_add_img_auto(paste0(image_dir, "powersim_combined_ancestries.png")) %>%
+  body_add_break() %>%
+  body_add_img_auto(paste0(image_dir, "combined_fdr_solarplot_genebased.png")) %>%
+  body_add_break() %>%
+  body_add_par("EUR") %>%
+  body_add_img_auto(paste0(image_dir, "cor_MAF_gnomAD_EUR.png")) %>%
+  body_add_par("AFR") %>%
+  body_add_img_auto(paste0(image_dir, "cor_MAF_gnomAD_AFR.png")) %>%
+  body_add_par("AMR") %>%
+  body_add_img_auto(paste0(image_dir, "cor_MAF_gnomAD_AMR.png")) %>%
+  body_add_par("EAS") %>%
+  body_add_img_auto(paste0(image_dir, "cor_MAF_gnomAD_EAS.png")) %>%
+  body_add_break() 
+
+# Manhattan plots for extended phewas
+mhfiles <- list.files(paste0(image_dir, "extManhattan"), full.names=T) %>% sort()
+for (i in 1:length(mhfiles)){
+  img_doc <- img_doc %>%
+    body_add_img(src = mhfiles[i], width = 4, height = 3)
+}
+
+img_doc <- img_doc %>%
+  body_end_section_landscape() 
+
+print(img_doc, target = paste0(output_dir, "images.docx"))
+```
+
+
